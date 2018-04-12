@@ -19,7 +19,7 @@ namespace anki
 class Ssao : public RendererObject
 {
 anki_internal:
-	static const PixelFormat RT_PIXEL_FORMAT;
+	static const Format RT_PIXEL_FORMAT = Format::R8_UNORM;
 
 	Ssao(Renderer* r)
 		: RendererObject(r)
@@ -33,7 +33,10 @@ anki_internal:
 	/// Populate the rendergraph.
 	void populateRenderGraph(RenderingContext& ctx);
 
-	RenderTargetHandle getRt() const;
+	RenderTargetHandle getRt() const
+	{
+		return m_runCtx.m_rts[0];
+	}
 
 private:
 	U32 m_width, m_height;
@@ -67,7 +70,7 @@ private:
 		const RenderingContext* m_ctx = nullptr;
 	} m_runCtx; ///< Runtime context.
 
-	Array<TexturePtr, 2> m_rtTextures;
+	RenderTargetDescription m_rtDescr;
 	FramebufferDescription m_fbDescr;
 
 	ANKI_USE_RESULT Error initMain(const ConfigSet& set);

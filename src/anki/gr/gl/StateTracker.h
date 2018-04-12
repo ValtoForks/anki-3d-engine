@@ -44,13 +44,13 @@ public:
 	{
 	public:
 		U32 m_buffBinding = MAX_U32;
-		PixelFormat m_fmt;
+		Format m_fmt = Format::NONE;
 		PtrSize m_relativeOffset = MAX_PTR_SIZE;
 	};
 
 	Array<VertexAttribute, MAX_VERTEX_ATTRIBUTES> m_attribs;
 
-	Bool setVertexAttribute(U32 location, U32 buffBinding, const PixelFormat& fmt, PtrSize relativeOffset)
+	Bool setVertexAttribute(U32 location, U32 buffBinding, Format fmt, PtrSize relativeOffset)
 	{
 		VertexAttribute& attrib = m_attribs[location];
 		if(attrib.m_buffBinding != buffBinding || attrib.m_fmt != fmt || attrib.m_relativeOffset != relativeOffset)
@@ -201,8 +201,8 @@ public:
 		Bool enable = !stencilTestDisabled(
 			m_stencilFail[0], m_stencilPassDepthFail[0], m_stencilPassDepthPass[0], m_stencilCompare[0]);
 		enable = enable
-			|| !stencilTestDisabled(
-				   m_stencilFail[1], m_stencilPassDepthFail[1], m_stencilPassDepthPass[1], m_stencilCompare[1]);
+				 || !stencilTestDisabled(
+						m_stencilFail[1], m_stencilPassDepthFail[1], m_stencilPassDepthPass[1], m_stencilCompare[1]);
 
 		if(enable != m_stencilTestEnabled)
 		{

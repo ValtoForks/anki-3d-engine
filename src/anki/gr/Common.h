@@ -43,14 +43,15 @@ const U MAX_MIPMAPS = 16;
 const U MAX_TEXTURE_LAYERS = 32;
 const U MAX_SPECIALIZED_CONSTS = 64;
 
-const U MAX_TEXTURE_BINDINGS = 8;
-const U MAX_UNIFORM_BUFFER_BINDINGS = 5;
+const U MAX_TEXTURE_BINDINGS = 16;
+const U MAX_UNIFORM_BUFFER_BINDINGS = 4;
 const U MAX_STORAGE_BUFFER_BINDINGS = 4;
 const U MAX_IMAGE_BINDINGS = 4;
 const U MAX_TEXTURE_BUFFER_BINDINGS = 4;
 
 const U MAX_BINDINGS_PER_DESCRIPTOR_SET = MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS
-	+ MAX_STORAGE_BUFFER_BINDINGS + MAX_IMAGE_BINDINGS + MAX_TEXTURE_BUFFER_BINDINGS;
+										  + MAX_STORAGE_BUFFER_BINDINGS + MAX_IMAGE_BINDINGS
+										  + MAX_TEXTURE_BUFFER_BINDINGS;
 
 const U MAX_FRAMES_IN_FLIGHT = 3; ///< Triple buffering.
 const U MAX_DESCRIPTOR_SETS = 2; ///< Groups that can be bound at the same time.
@@ -65,8 +66,8 @@ template<typename T>
 using GrObjectPtr = IntrusivePtr<T, DefaultPtrDeleter<T>>;
 
 #define ANKI_GR_CLASS(x_) \
-	class x_##Impl;       \
-	class x_;             \
+	class x_##Impl; \
+	class x_; \
 	using x_##Ptr = GrObjectPtr<x_>;
 
 ANKI_GR_CLASS(Buffer)
@@ -83,10 +84,10 @@ ANKI_GR_CLASS(RenderGraph)
 
 #undef ANKI_GR_CLASS
 
-#define ANKI_GR_OBJECT           \
-	friend class GrManager;      \
+#define ANKI_GR_OBJECT \
+	friend class GrManager; \
 	template<typename, typename> \
-	friend class IntrusivePtr;   \
+	friend class IntrusivePtr; \
 	template<typename, typename> \
 	friend class GenericPoolAllocator;
 
@@ -103,12 +104,37 @@ enum class GpuVendor : U8
 
 extern Array<CString, U(GpuVendor::COUNT)> GPU_VENDOR_STR;
 
-enum class GpuDeviceCapabilitiesBit : U8
+/// Device capabilities.
+class GpuDeviceCapabilities
 {
-	NONE = 0,
-	SHADER_BALLOT = 1 << 0,
+public:
+	/// Max push constant size.
+	U32 m_pushConstantsSize = 128;
+
+	/// GPU vendor.
+	GpuVendor m_gpuVendor = GpuVendor::UNKNOWN;
+
+	/// Device supports subgroup operations.
+	Bool8 m_shaderSubgroups = false;
+
+	/// The alignment of offsets when bounding uniform buffers.
+	PtrSize m_uniformBufferBindOffsetAlignment = MAX_U32;
+
+	/// The max visible range of uniform buffers inside the shaders.
+	PtrSize m_uniformBufferMaxRange = 0;
+
+	/// The alignment of offsets when bounding storage buffers.
+	PtrSize m_storageBufferBindOffsetAlignment = MAX_U32;
+
+	/// The max visible range of storage buffers inside the shaders.
+	PtrSize m_storageBufferMaxRange = 0;
+
+	/// The alignment of offsets when bounding texture buffers.
+	PtrSize m_textureBufferBindOffsetAlignment = MAX_U32;
+
+	/// The max visible range of texture buffers inside the shaders.
+	PtrSize m_textureBufferMaxRange = 0;
 };
-ANKI_ENUM_ALLOW_NUMERIC_OPERATIONS(GpuDeviceCapabilitiesBit, inline)
 
 /// The type of the allocator for heap allocations
 template<typename T>
@@ -362,10 +388,10 @@ inline U computeMaxMipmapCount3d(U w, U h, U d)
 }
 
 /// Compute the size in bytes of a texture surface surface.
-PtrSize computeSurfaceSize(U width, U height, const PixelFormat& fmt);
+PtrSize computeSurfaceSize(U width, U height, Format fmt);
 
 /// Compute the size in bytes of the texture volume.
-PtrSize computeVolumeSize(U width, U height, U depth, const PixelFormat& fmt);
+PtrSize computeVolumeSize(U width, U height, U depth, Format fmt);
 /// @}
 
 } // end namespace anki

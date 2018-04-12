@@ -5,7 +5,7 @@
 
 #include <anki/renderer/Drawer.h>
 #include <anki/renderer/RenderQueue.h>
-#include <anki/resource/Material.h>
+#include <anki/resource/MaterialResource.h>
 #include <anki/resource/TextureResource.h>
 #include <anki/renderer/Renderer.h>
 #include <anki/core/Trace.h>
@@ -103,7 +103,8 @@ void RenderableDrawer::drawSingle(DrawContext& ctx)
 		lod = min<U8>(m_r->calculateLod(rqel.m_distanceFromCamera), MAX_LOD_COUNT - 1);
 	}
 
-	const Bool shouldFlush = ctx.m_cachedRenderElementCount > 0
+	const Bool shouldFlush =
+		ctx.m_cachedRenderElementCount > 0
 		&& (!canMergeRenderableQueueElements(ctx.m_cachedRenderElements[ctx.m_cachedRenderElementCount - 1], rqel)
 			   || ctx.m_cachedRenderElementLods[ctx.m_cachedRenderElementCount - 1] != lod);
 

@@ -32,6 +32,14 @@ public:
 	NativeWindow* m_window = nullptr;
 };
 
+/// Graphics statistics.
+class GrManagerStats
+{
+public:
+	PtrSize m_cpuMemory;
+	PtrSize m_gpuMemory;
+};
+
 /// The graphics manager, owner of all graphics objects.
 class GrManager
 {
@@ -42,13 +50,7 @@ public:
 	/// Destroy.
 	static void deleteInstance(GrManager* gr);
 
-	GpuVendor getGpuVendor() const
-	{
-		ANKI_ASSERT(m_gpuVendor != GpuVendor::COUNT);
-		return m_gpuVendor;
-	}
-
-	GpuDeviceCapabilitiesBit getDeviceCapabilities() const
+	const GpuDeviceCapabilities& getDeviceCapabilities() const
 	{
 		return m_capabilities;
 	}
@@ -76,14 +78,7 @@ public:
 	ANKI_USE_RESULT RenderGraphPtr newRenderGraph();
 	/// @}
 
-	/// Get some buffer alignment and size info.
-	void getUniformBufferInfo(U32& bindOffsetAlignment, PtrSize& maxUniformBlockSize) const;
-
-	/// Get some buffer alignment info.
-	void getStorageBufferInfo(U32& bindOffsetAlignment, PtrSize& maxStorageBlockSize) const;
-
-	/// Get some buffer alignment info.
-	void getTextureBufferInfo(U32& bindOffsetAlignment, PtrSize& maxRange) const;
+	GrManagerStats getStats() const;
 
 anki_internal:
 	GrAllocator<U8>& getAllocator()
@@ -101,17 +96,16 @@ anki_internal:
 		return m_cacheDir.toCString();
 	}
 
-	U64& getUuidIndex()
+	U64 getNewUuid()
 	{
-		return m_uuidIndex;
+		return m_uuidIndex.fetchAdd(1);
 	}
 
 protected:
 	GrAllocator<U8> m_alloc; ///< Keep it first to get deleted last
 	String m_cacheDir;
-	U64 m_uuidIndex = 1;
-	GpuVendor m_gpuVendor = GpuVendor::COUNT;
-	GpuDeviceCapabilitiesBit m_capabilities = GpuDeviceCapabilitiesBit::NONE;
+	Atomic<U64> m_uuidIndex = {1};
+	GpuDeviceCapabilities m_capabilities;
 
 	GrManager();
 

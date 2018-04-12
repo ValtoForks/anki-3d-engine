@@ -41,7 +41,7 @@ public:
 	Bool operator==(const DrawElementsIndirectInfo& b) const
 	{
 		return m_count == b.m_count && m_instanceCount == b.m_instanceCount && m_firstIndex == b.m_firstIndex
-			&& m_baseVertex == b.m_baseVertex && m_baseInstance == b.m_baseInstance;
+			   && m_baseVertex == b.m_baseVertex && m_baseInstance == b.m_baseInstance;
 	}
 
 	Bool operator!=(const DrawElementsIndirectInfo& b) const
@@ -74,7 +74,7 @@ public:
 	Bool operator==(const DrawArraysIndirectInfo& b) const
 	{
 		return m_count == b.m_count && m_instanceCount == b.m_instanceCount && m_first == b.m_first
-			&& m_baseInstance == b.m_baseInstance;
+			   && m_baseInstance == b.m_baseInstance;
 	}
 
 	Bool operator!=(const DrawArraysIndirectInfo& b) const
@@ -114,7 +114,7 @@ enum class CommandBufferFlag : U8
 ANKI_ENUM_ALLOW_NUMERIC_OPERATIONS(CommandBufferFlag, inline)
 
 /// Command buffer init info.
-class CommandBufferInitInfo
+class CommandBufferInitInfo : public GrBaseInitInfo
 {
 public:
 	FramebufferPtr m_framebuffer; ///< For second level command buffers.
@@ -123,6 +123,11 @@ public:
 	CommandBufferInitHints m_hints;
 
 	CommandBufferFlag m_flags = CommandBufferFlag::NONE;
+
+	CommandBufferInitInfo(CString name = {})
+		: GrBaseInitInfo(name)
+	{
+	}
 };
 
 /// Command buffer.
@@ -148,7 +153,7 @@ public:
 		U32 binding, BufferPtr buff, PtrSize offset, PtrSize stride, VertexStepRate stepRate = VertexStepRate::VERTEX);
 
 	/// Setup a vertex attribute.
-	void setVertexAttribute(U32 location, U32 buffBinding, const PixelFormat& fmt, PtrSize relativeOffset);
+	void setVertexAttribute(U32 location, U32 buffBinding, Format fmt, PtrSize relativeOffset);
 
 	/// Bind index buffer.
 	void bindIndexBuffer(BufferPtr buff, PtrSize offset, IndexType type);
@@ -166,6 +171,7 @@ public:
 	void setFillMode(FillMode mode);
 
 	/// Set cull mode.
+	/// By default it's FaceSelectionBit::BACK.
 	void setCullMode(FaceSelectionBit mode);
 
 	/// Set depth offset and units. Set zeros to both to disable it.
@@ -203,6 +209,8 @@ public:
 	void setColorChannelWriteMask(U32 attachment, ColorBit mask);
 
 	/// Set blend factors seperate.
+	/// By default the values of srcRgb, dstRgb, srcA and dstA are BlendFactor::ONE, BlendFactor::ZERO,
+	/// BlendFactor::ONE, BlendFactor::ZERO respectively.
 	void setBlendFactors(U32 attachment, BlendFactor srcRgb, BlendFactor dstRgb, BlendFactor srcA, BlendFactor dstA);
 
 	/// Set blend factors.
@@ -212,6 +220,7 @@ public:
 	}
 
 	/// Set the blend operation seperate.
+	/// By default the values of funcRgb and funcA are BlendOperation::ADD, BlendOperation::ADD respectively.
 	void setBlendOperation(U32 attachment, BlendOperation funcRgb, BlendOperation funcA);
 
 	/// Set the blend operation.
@@ -250,7 +259,10 @@ public:
 	void bindImage(U32 set, U32 binding, TextureViewPtr img);
 
 	/// Bind texture buffer.
-	void bindTextureBuffer(U32 set, U32 binding, BufferPtr buff, PtrSize offset, PtrSize range, PixelFormat fmt);
+	void bindTextureBuffer(U32 set, U32 binding, BufferPtr buff, PtrSize offset, PtrSize range, Format fmt);
+
+	/// Set push constants.
+	void setPushConstants(const void* data, U32 dataSize);
 
 	/// Bind a program.
 	void bindShaderProgram(ShaderProgramPtr prog);
@@ -373,8 +385,8 @@ public:
 
 protected:
 	/// Construct.
-	CommandBuffer(GrManager* manager)
-		: GrObject(manager, CLASS_TYPE)
+	CommandBuffer(GrManager* manager, CString name)
+		: GrObject(manager, CLASS_TYPE, name)
 	{
 	}
 

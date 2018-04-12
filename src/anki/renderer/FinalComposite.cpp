@@ -12,6 +12,7 @@
 #include <anki/renderer/GBuffer.h>
 #include <anki/renderer/Dbg.h>
 #include <anki/renderer/Ssao.h>
+#include <anki/renderer/Reflections.h>
 #include <anki/renderer/DownscaleBlur.h>
 #include <anki/renderer/UiStage.h>
 #include <anki/util/Logger.h>
@@ -19,8 +20,6 @@
 
 namespace anki
 {
-
-const PixelFormat FinalComposite::RT_PIXEL_FORMAT(ComponentFormat::R8G8B8, TransformFormat::UNORM);
 
 FinalComposite::FinalComposite(Renderer* r)
 	: RendererObject(r)

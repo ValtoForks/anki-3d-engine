@@ -20,6 +20,7 @@ namespace anki
 // Forward
 class Renderer;
 class GBuffer;
+class GBufferPost;
 class ShadowMapping;
 class LightShading;
 class ForwardShading;
@@ -67,6 +68,12 @@ const U BLOOM_FRACTION = 4;
 /// Volumetric size is rendererSize/VOLUMETRIC_FRACTION.
 const U VOLUMETRIC_FRACTION = 4;
 
+/// Number of mipmaps of the HZ map.
+const U HIERARCHICAL_Z_MIPMAP_COUNT = 4;
+
+const TextureSubresourceInfo HIZ_HALF_DEPTH(TextureSurfaceInfo(0, 0, 0, 0));
+const TextureSubresourceInfo HIZ_QUARTER_DEPTH(TextureSurfaceInfo(1, 0, 0, 0));
+
 /// Computes the 'a' and 'b' numbers for linearizeDepthOptimal (see shaders)
 inline void computeLinearizeDepthOptimal(F32 near, F32 far, F32& a, F32& b)
 {
@@ -82,18 +89,18 @@ const U DOWNSCALE_BLUR_DOWN_TO = 32;
 /// Use this size of render target for the avg lum calculation.
 const U AVERAGE_LUMINANCE_RENDER_TARGET_SIZE = 128;
 
-extern const Array<PixelFormat, GBUFFER_COLOR_ATTACHMENT_COUNT> MS_COLOR_ATTACHMENT_PIXEL_FORMATS;
+extern const Array<Format, GBUFFER_COLOR_ATTACHMENT_COUNT> MS_COLOR_ATTACHMENT_PIXEL_FORMATS;
 
-const PixelFormat GBUFFER_DEPTH_ATTACHMENT_PIXEL_FORMAT(ComponentFormat::D24S8, TransformFormat::UNORM);
+const Format GBUFFER_DEPTH_ATTACHMENT_PIXEL_FORMAT = Format::D24_UNORM_S8_UINT;
 
-const PixelFormat LIGHT_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT(ComponentFormat::R11G11B10, TransformFormat::FLOAT);
+const Format LIGHT_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT = Format::B10G11R11_UFLOAT_PACK32;
 
-const PixelFormat FORWARD_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT(ComponentFormat::R16G16B16A16, TransformFormat::FLOAT);
+const Format FORWARD_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT = Format::R16G16B16A16_SFLOAT;
 
-const PixelFormat DBG_COLOR_ATTACHMENT_PIXEL_FORMAT(ComponentFormat::R8G8B8, TransformFormat::UNORM);
+const Format DBG_COLOR_ATTACHMENT_PIXEL_FORMAT = Format::R8G8B8_UNORM;
 
-const PixelFormat SHADOW_DEPTH_PIXEL_FORMAT(ComponentFormat::D32, TransformFormat::FLOAT);
-const PixelFormat SHADOW_COLOR_PIXEL_FORMAT(ComponentFormat::R16, TransformFormat::UNORM);
+const Format SHADOW_DEPTH_PIXEL_FORMAT = Format::D32_SFLOAT;
+const Format SHADOW_COLOR_PIXEL_FORMAT = Format::R16_UNORM;
 /// @}
 
 } // end namespace anki

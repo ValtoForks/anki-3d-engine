@@ -6,7 +6,6 @@
 #pragma once
 
 #include <anki/renderer/Common.h>
-#include <anki/core/Timestamp.h>
 #include <anki/resource/RenderingKey.h>
 #include <anki/ui/Canvas.h>
 
@@ -25,6 +24,14 @@ public:
 	Mat4 m_viewProjectionMatrix;
 };
 
+/// Some options that can be used as hints in debug drawcalls.
+enum class RenderQueueDebugDrawFlag : U32
+{
+	DEPTH_TEST_ON,
+	DITHERED_DEPTH_TEST_ON,
+	COUNT
+};
+
 /// Context that contains variables for drawing and will be passed to RenderQueueDrawCallback.
 class RenderQueueDrawContext final : public RenderingMatrices
 {
@@ -33,6 +40,7 @@ public:
 	CommandBufferPtr m_commandBuffer;
 	StagingGpuMemoryManager* m_stagingGpuAllocator ANKI_DBG_NULLIFY;
 	Bool m_debugDraw; ///< If true the drawcall should be drawing some kind of debug mesh.
+	BitSet<U(RenderQueueDebugDrawFlag::COUNT), U32> m_debugDrawFlags = {false};
 };
 
 /// Draw callback for drawing.
@@ -59,7 +67,6 @@ public:
 	Vec3 m_worldPosition;
 	F32 m_radius;
 	Vec3 m_diffuseColor;
-	Vec3 m_specularColor;
 	Array<RenderQueue*, 6> m_shadowRenderQueues;
 	const void* m_userData;
 	RenderQueueDrawCallback m_drawCallback;
@@ -87,7 +94,6 @@ public:
 	F32 m_outerAngle;
 	F32 m_innerAngle;
 	Vec3 m_diffuseColor;
-	Vec3 m_specularColor;
 	RenderQueue* m_shadowRenderQueue;
 	const void* m_userData;
 	RenderQueueDrawCallback m_drawCallback;
@@ -146,11 +152,11 @@ public:
 	/// Totaly unsafe but we can't have a smart ptr in here since there will be no deletion.
 	const TextureView* m_diffuseAtlas;
 	/// Totaly unsafe but we can't have a smart ptr in here since there will be no deletion.
-	const TextureView* m_normalRoughnessAtlas;
+	const TextureView* m_specularRoughnessAtlas;
 	Vec4 m_diffuseAtlasUv;
-	Vec4 m_normalRoughnessAtlasUv;
+	Vec4 m_specularRoughnessAtlasUv;
 	F32 m_diffuseAtlasBlendFactor;
-	F32 m_normalRoughnessAtlasBlendFactor;
+	F32 m_specularRoughnessAtlasBlendFactor;
 	Mat4 m_textureMatrix;
 	Vec3 m_obbCenter;
 	Vec3 m_obbExtend;

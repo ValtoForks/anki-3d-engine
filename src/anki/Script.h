@@ -6,3 +6,4 @@
 #pragma once
 
 #include <anki/script/ScriptManager.h>
+#include <anki/script/ScriptEnvironment.h>

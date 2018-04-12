@@ -8,7 +8,6 @@
 #include <anki/gr/gl/RenderingThread.h>
 #include <anki/gr/gl/TextureImpl.h>
 #include <anki/gr/gl/GlState.h>
-#include <anki/core/Timestamp.h>
 
 #include <anki/gr/Buffer.h>
 #include <anki/gr/Texture.h>
@@ -81,10 +80,10 @@ void GrManager::finish()
 	self.getRenderingThread().syncClientServer();
 }
 
-#define ANKI_SAFE_CONSTRUCT(class_)                \
+#define ANKI_SAFE_CONSTRUCT(class_) \
 	class_* out = class_::newInstance(this, init); \
-	class_##Ptr ptr(out);                          \
-	out->getRefcount().fetchSub(1);                \
+	class_##Ptr ptr(out); \
+	out->getRefcount().fetchSub(1); \
 	return ptr
 
 BufferPtr GrManager::newBuffer(const BufferInitInfo& init)
@@ -141,35 +140,5 @@ RenderGraphPtr GrManager::newRenderGraph()
 }
 
 #undef ANKI_SAFE_CONSTRUCT
-
-void GrManager::getUniformBufferInfo(U32& bindOffsetAlignment, PtrSize& maxUniformBlockSize) const
-{
-	ANKI_GL_SELF_CONST(GrManagerImpl);
-
-	bindOffsetAlignment = self.getState().m_uboAlignment;
-	maxUniformBlockSize = self.getState().m_uniBlockMaxSize;
-
-	ANKI_ASSERT(bindOffsetAlignment > 0 && maxUniformBlockSize > 0);
-}
-
-void GrManager::getStorageBufferInfo(U32& bindOffsetAlignment, PtrSize& maxStorageBlockSize) const
-{
-	ANKI_GL_SELF_CONST(GrManagerImpl);
-
-	bindOffsetAlignment = self.getState().m_ssboAlignment;
-	maxStorageBlockSize = self.getState().m_storageBlockMaxSize;
-
-	ANKI_ASSERT(bindOffsetAlignment > 0 && maxStorageBlockSize > 0);
-}
-
-void GrManager::getTextureBufferInfo(U32& bindOffsetAlignment, PtrSize& maxRange) const
-{
-	ANKI_GL_SELF_CONST(GrManagerImpl);
-
-	bindOffsetAlignment = self.getState().m_tboAlignment;
-	maxRange = self.getState().m_tboMaxRange;
-
-	ANKI_ASSERT(bindOffsetAlignment > 0 && maxRange > 0);
-}
 
 } // end namespace anki

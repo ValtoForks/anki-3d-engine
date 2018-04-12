@@ -6,13 +6,13 @@
 #include <anki/renderer/LightShading.h>
 #include <anki/renderer/Renderer.h>
 #include <anki/renderer/ShadowMapping.h>
-#include <anki/renderer/Ssao.h>
 #include <anki/renderer/Indirect.h>
 #include <anki/renderer/GBuffer.h>
 #include <anki/renderer/LightBin.h>
 #include <anki/renderer/RenderQueue.h>
 #include <anki/renderer/ForwardShading.h>
 #include <anki/renderer/DepthDownscale.h>
+#include <anki/renderer/Reflections.h>
 #include <anki/misc/ConfigSet.h>
 #include <anki/util/HighRezTimer.h>
 #include <anki/collision/Functions.h>
@@ -23,15 +23,19 @@ namespace anki
 /// @note Should match the shader
 struct ShaderCommonUniforms
 {
-	Vec4 m_projectionParams;
+	Vec4 m_unprojectionParams;
 	Vec4 m_rendererSizeTimeNear;
 	Vec4 m_cameraPosFar;
 	ClustererShaderMagicValues m_clustererMagicValues;
 	UVec4 m_tileCount;
+	Mat4 m_viewMat;
 	Mat4 m_invViewMat;
+	Mat4 m_projMat;
+	Mat4 m_invProjMat;
+	Mat4 m_viewProjMat;
 	Mat4 m_invViewProjMat;
 	Mat4 m_prevViewProjMat;
-	Mat4 m_invProjMat;
+	Mat4 m_prevViewProjMatMulInvViewProjMat;
 };
 
 LightShading::LightShading(Renderer* r)
@@ -134,41 +138,26 @@ void LightShading::run(const RenderingContext& ctx, RenderPassWorkContext& rgrap
 	cmdb->setViewport(0, 0, m_r->getWidth(), m_r->getHeight());
 	cmdb->bindShaderProgram(m_progVariant->getProgram());
 
-	rgraphCtx.bindColorTextureAndSampler(1, 0, m_r->getGBuffer().getColorRt(0), m_r->getNearestSampler());
-	rgraphCtx.bindColorTextureAndSampler(1, 1, m_r->getGBuffer().getColorRt(1), m_r->getNearestSampler());
-	rgraphCtx.bindColorTextureAndSampler(1, 2, m_r->getGBuffer().getColorRt(2), m_r->getNearestSampler());
-	rgraphCtx.bindTextureAndSampler(1,
+	// Bind textures
+	rgraphCtx.bindColorTextureAndSampler(0, 0, m_r->getGBuffer().getColorRt(0), m_r->getNearestSampler());
+	rgraphCtx.bindColorTextureAndSampler(0, 1, m_r->getGBuffer().getColorRt(1), m_r->getNearestSampler());
+	rgraphCtx.bindColorTextureAndSampler(0, 2, m_r->getGBuffer().getColorRt(2), m_r->getNearestSampler());
+	rgraphCtx.bindTextureAndSampler(0,
 		3,
 		m_r->getGBuffer().getDepthRt(),
 		TextureSubresourceInfo(DepthStencilAspectBit::DEPTH),
 		m_r->getNearestSampler());
-	rgraphCtx.bindColorTextureAndSampler(1, 4, m_r->getSsao().getRt(), m_r->getLinearSampler());
 
-	rgraphCtx.bindColorTextureAndSampler(0, 0, m_r->getShadowMapping().getShadowmapRt(), m_r->getLinearSampler());
-	rgraphCtx.bindColorTextureAndSampler(0, 1, m_r->getIndirect().getReflectionRt(), m_r->getTrilinearRepeatSampler());
-	rgraphCtx.bindColorTextureAndSampler(0, 2, m_r->getIndirect().getIrradianceRt(), m_r->getLinearSampler());
-	cmdb->bindTextureAndSampler(0,
-		3,
-		m_r->getIndirect().getIntegrationLut(),
-		m_r->getIndirect().getIntegrationLutSampler(),
-		TextureUsageBit::SAMPLED_FRAGMENT);
-	cmdb->bindTextureAndSampler(0,
-		4,
-		(rsrc.m_diffDecalTexView) ? rsrc.m_diffDecalTexView : m_r->getDummyTextureView(),
-		m_r->getTrilinearRepeatSampler(),
-		TextureUsageBit::SAMPLED_FRAGMENT);
-	cmdb->bindTextureAndSampler(0,
-		5,
-		(rsrc.m_normRoughnessDecalTexView) ? rsrc.m_normRoughnessDecalTexView : m_r->getDummyTextureView(),
-		m_r->getTrilinearRepeatSampler(),
-		TextureUsageBit::SAMPLED_FRAGMENT);
+	rgraphCtx.bindColorTextureAndSampler(0, 4, m_r->getReflections().getRt(), m_r->getNearestSampler());
 
+	rgraphCtx.bindColorTextureAndSampler(0, 5, m_r->getShadowMapping().getShadowmapRt(), m_r->getLinearSampler());
+
+	// Bind uniforms
 	bindUniforms(cmdb, 0, 0, rsrc.m_commonUniformsToken);
 	bindUniforms(cmdb, 0, 1, rsrc.m_pointLightsToken);
 	bindUniforms(cmdb, 0, 2, rsrc.m_spotLightsToken);
-	bindUniforms(cmdb, 0, 3, rsrc.m_probesToken);
-	bindUniforms(cmdb, 0, 4, rsrc.m_decalsToken);
 
+	// Bind storage
 	bindStorage(cmdb, 0, 0, rsrc.m_clustersToken);
 	bindStorage(cmdb, 0, 1, rsrc.m_lightIndicesToken);
 
@@ -184,23 +173,31 @@ void LightShading::updateCommonBlock(RenderingContext& ctx)
 		sizeof(ShaderCommonUniforms), m_runCtx.m_resources.m_commonUniformsToken);
 
 	// Start writing
-	blk->m_projectionParams = ctx.m_unprojParams;
-
-	blk->m_invViewMat = ctx.m_renderQueue->m_viewMatrix.getInverse();
+	blk->m_unprojectionParams = ctx.m_unprojParams;
 
 	blk->m_rendererSizeTimeNear =
 		Vec4(m_r->getWidth(), m_r->getHeight(), HighRezTimer::getCurrentTime(), ctx.m_renderQueue->m_cameraNear);
 
 	blk->m_tileCount = UVec4(m_clusterCounts[0], m_clusterCounts[1], m_clusterCounts[2], m_clusterCount);
 
-	blk->m_invViewProjMat = ctx.m_viewProjMatJitter.getInverse();
-	blk->m_prevViewProjMat = ctx.m_prevViewProjMat;
-	blk->m_invProjMat = ctx.m_projMatJitter.getInverse();
-
 	blk->m_cameraPosFar =
 		Vec4(ctx.m_renderQueue->m_cameraTransform.getTranslationPart().xyz(), ctx.m_renderQueue->m_cameraFar);
 
 	blk->m_clustererMagicValues = m_lightBin->getClusterer().getShaderMagicValues();
+
+	// Matrices
+	blk->m_viewMat = ctx.m_renderQueue->m_viewMatrix;
+	blk->m_invViewMat = ctx.m_renderQueue->m_viewMatrix.getInverse();
+
+	blk->m_projMat = ctx.m_projMatJitter;
+	blk->m_invProjMat = ctx.m_projMatJitter.getInverse();
+
+	blk->m_viewProjMat = ctx.m_viewProjMatJitter;
+	blk->m_invViewProjMat = ctx.m_viewProjMatJitter.getInverse();
+
+	blk->m_prevViewProjMat = ctx.m_prevViewProjMat;
+
+	blk->m_prevViewProjMatMulInvViewProjMat = ctx.m_prevViewProjMat * ctx.m_viewProjMatJitter.getInverse();
 }
 
 void LightShading::populateRenderGraph(RenderingContext& ctx)
@@ -224,12 +221,11 @@ void LightShading::populateRenderGraph(RenderingContext& ctx)
 	pass.newConsumer({m_r->getGBuffer().getDepthRt(),
 		TextureUsageBit::SAMPLED_FRAGMENT,
 		TextureSubresourceInfo(DepthStencilAspectBit::DEPTH)});
-	pass.newConsumer({m_r->getSsao().getRt(), TextureUsageBit::SAMPLED_FRAGMENT});
 	pass.newConsumer({m_r->getShadowMapping().getShadowmapRt(), TextureUsageBit::SAMPLED_FRAGMENT});
-	pass.newConsumer({m_r->getIndirect().getReflectionRt(), TextureUsageBit::SAMPLED_FRAGMENT});
-	pass.newConsumer({m_r->getIndirect().getIrradianceRt(), TextureUsageBit::SAMPLED_FRAGMENT});
+	pass.newConsumer({m_r->getReflections().getRt(), TextureUsageBit::SAMPLED_FRAGMENT});
 
-	pass.newConsumer({m_r->getDepthDownscale().getHalfDepthColorRt(), TextureUsageBit::SAMPLED_FRAGMENT});
+	// For forward shading
+	pass.newConsumer({m_r->getDepthDownscale().getHiZRt(), TextureUsageBit::SAMPLED_FRAGMENT, HIZ_HALF_DEPTH});
 	pass.newConsumer({m_r->getForwardShading().getRt(), TextureUsageBit::SAMPLED_FRAGMENT});
 
 	pass.newProducer({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});

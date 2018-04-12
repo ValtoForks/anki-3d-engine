@@ -10,7 +10,6 @@
 #include <anki/Math.h>
 #include <anki/Gr.h>
 #include <anki/resource/Forward.h>
-#include <anki/core/Timestamp.h>
 #include <anki/core/StagingGpuMemoryManager.h>
 #include <anki/util/ThreadPool.h>
 #include <anki/collision/Forward.h>
@@ -56,6 +55,14 @@ public:
 	}
 };
 
+/// Renderer statistics.
+class RendererStats
+{
+public:
+	U32 m_drawcallCount ANKI_DBG_NULLIFY;
+	Second m_lightBinTime ANKI_DBG_NULLIFY;
+};
+
 /// Offscreen renderer. It is a class and not a namespace because we may need external renderers for security cameras
 /// for example
 class Renderer
@@ -64,12 +71,6 @@ public:
 	Renderer();
 
 	~Renderer();
-
-	UiManager& getUiManager()
-	{
-		ANKI_ASSERT(m_ui);
-		return *m_ui;
-	}
 
 	Indirect& getIndirect()
 	{
@@ -183,7 +184,6 @@ public:
 		StagingGpuMemoryManager* stagingMem,
 		UiManager* ui,
 		HeapAllocator<U8> alloc,
-		StackAllocator<U8> frameAlloc,
 		const ConfigSet& config,
 		Timestamp* globTimestamp,
 		Bool willDrawToDefaultFbo);
@@ -192,6 +192,11 @@ public:
 	ANKI_USE_RESULT Error populateRenderGraph(RenderingContext& ctx);
 
 	void finalize(const RenderingContext& ctx);
+
+	const RendererStats& getStats() const
+	{
+		return m_stats;
+	}
 
 anki_internal:
 	U64 getFrameCount() const
@@ -207,6 +212,12 @@ anki_internal:
 	RenderableDrawer& getSceneDrawer()
 	{
 		return m_sceneDrawer;
+	}
+
+	UiManager& getUiManager()
+	{
+		ANKI_ASSERT(m_ui);
+		return *m_ui;
 	}
 
 	Bool getTessellationEnabled() const
@@ -243,11 +254,11 @@ anki_internal:
 
 	/// Create the init info for a 2D texture that will be used as a render target.
 	ANKI_USE_RESULT TextureInitInfo create2DRenderTargetInitInfo(
-		U32 w, U32 h, const PixelFormat& format, TextureUsageBit usage, CString name = {});
+		U32 w, U32 h, Format format, TextureUsageBit usage, CString name = {});
 
 	/// Create the init info for a 2D texture that will be used as a render target.
 	ANKI_USE_RESULT RenderTargetDescription create2DRenderTargetDescription(
-		U32 w, U32 h, const PixelFormat& format, TextureUsageBit usage, CString name = {});
+		U32 w, U32 h, Format format, TextureUsageBit usage, CString name = {});
 
 	ANKI_USE_RESULT TexturePtr createAndClearRenderTarget(
 		const TextureInitInfo& inf, const ClearValue& clearVal = ClearValue());
@@ -265,11 +276,6 @@ anki_internal:
 	HeapAllocator<U8> getAllocator() const
 	{
 		return m_alloc;
-	}
-
-	StackAllocator<U8> getFrameAllocator() const
-	{
-		return m_frameAlloc;
 	}
 
 	ResourceManager& getResourceManager()
@@ -313,11 +319,6 @@ anki_internal:
 		return m_dummyBuff;
 	}
 
-	static constexpr PtrSize getDummyBufferSize()
-	{
-		return 1024;
-	}
-
 	SamplerPtr getNearestSampler() const
 	{
 		return m_nearestSampler;
@@ -333,6 +334,11 @@ anki_internal:
 		return m_trilinearRepeatSampler;
 	}
 
+	SamplerPtr getNearestNearestSampler() const
+	{
+		return m_nearesetNearestSampler;
+	}
+
 private:
 	ThreadPool* m_threadpool = nullptr;
 	ResourceManager* m_resources = nullptr;
@@ -341,13 +347,13 @@ private:
 	UiManager* m_ui = nullptr;
 	Timestamp* m_globTimestamp;
 	HeapAllocator<U8> m_alloc;
-	StackAllocator<U8> m_frameAlloc;
 
 	/// @name Rendering stages
 	/// @{
 	UniquePtr<Indirect> m_indirect;
 	UniquePtr<ShadowMapping> m_shadowMapping; ///< Shadow mapping.
 	UniquePtr<GBuffer> m_gbuffer; ///< Material rendering stage
+	UniquePtr<GBufferPost> m_gbufferPost;
 	UniquePtr<Reflections> m_refl;
 	UniquePtr<LightShading> m_lightShading; ///< Illumination rendering stage
 	UniquePtr<DepthDownscale> m_depth;
@@ -392,6 +398,9 @@ private:
 	SamplerPtr m_nearestSampler;
 	SamplerPtr m_linearSampler;
 	SamplerPtr m_trilinearRepeatSampler;
+	SamplerPtr m_nearesetNearestSampler;
+
+	RendererStats m_stats;
 
 	ANKI_USE_RESULT Error initInternal(const ConfigSet& initializer);
 

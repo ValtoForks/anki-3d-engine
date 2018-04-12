@@ -260,10 +260,11 @@ void CommandBufferImpl::endRenderPass()
 	m_activeFb.reset(nullptr);
 	m_state.endRenderPass();
 
-	// After pushing second level command buffers the state is undefined. Reset the tracker
+	// After pushing second level command buffers the state is undefined. Reset the tracker and rebind the dynamic state
 	if(m_subpassContents == VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS)
 	{
 		m_state.reset();
+		rebindDynamicState();
 	}
 }
 
@@ -468,12 +469,10 @@ void CommandBufferImpl::flushBarriers()
 
 			if(prev && prev->image == crnt.image
 				&& prev->subresourceRange.aspectMask == crnt.subresourceRange.aspectMask
-				&& prev->oldLayout == crnt.oldLayout
-				&& prev->newLayout == crnt.newLayout
-				&& prev->srcAccessMask == crnt.srcAccessMask
-				&& prev->dstAccessMask == crnt.dstAccessMask
+				&& prev->oldLayout == crnt.oldLayout && prev->newLayout == crnt.newLayout
+				&& prev->srcAccessMask == crnt.srcAccessMask && prev->dstAccessMask == crnt.dstAccessMask
 				&& prev->subresourceRange.baseMipLevel + prev->subresourceRange.levelCount
-					== crnt.subresourceRange.baseMipLevel
+					   == crnt.subresourceRange.baseMipLevel
 				&& prev->subresourceRange.baseArrayLayer == crnt.subresourceRange.baseArrayLayer
 				&& prev->subresourceRange.layerCount == crnt.subresourceRange.layerCount)
 			{
@@ -500,14 +499,12 @@ void CommandBufferImpl::flushBarriers()
 
 			if(prev && prev->image == crnt.image
 				&& prev->subresourceRange.aspectMask == crnt.subresourceRange.aspectMask
-				&& prev->oldLayout == crnt.oldLayout
-				&& prev->newLayout == crnt.newLayout
-				&& prev->srcAccessMask == crnt.srcAccessMask
-				&& prev->dstAccessMask == crnt.dstAccessMask
+				&& prev->oldLayout == crnt.oldLayout && prev->newLayout == crnt.newLayout
+				&& prev->srcAccessMask == crnt.srcAccessMask && prev->dstAccessMask == crnt.dstAccessMask
 				&& prev->subresourceRange.baseMipLevel == crnt.subresourceRange.baseMipLevel
 				&& prev->subresourceRange.levelCount == crnt.subresourceRange.levelCount
 				&& prev->subresourceRange.baseArrayLayer + prev->subresourceRange.layerCount
-					== crnt.subresourceRange.baseArrayLayer)
+					   == crnt.subresourceRange.baseArrayLayer)
 			{
 				// Can batch
 				finalImgBarriers[finalImgBarrierCount - 1].subresourceRange.layerCount +=
@@ -685,11 +682,11 @@ void CommandBufferImpl::copyBufferToTextureViewInternal(
 	{
 		if(!is3D)
 		{
-			ANKI_ASSERT(range == computeSurfaceSize(width, height, tex.getPixelFormat()));
+			ANKI_ASSERT(range == computeSurfaceSize(width, height, tex.getFormat()));
 		}
 		else
 		{
-			ANKI_ASSERT(range == computeVolumeSize(width, height, depth, tex.getPixelFormat()));
+			ANKI_ASSERT(range == computeVolumeSize(width, height, depth, tex.getFormat()));
 		}
 
 		// Copy
@@ -714,57 +711,59 @@ void CommandBufferImpl::copyBufferToTextureViewInternal(
 	else if(!!(tex.m_workarounds & TextureImplWorkaround::R8G8B8_TO_R8G8B8A8))
 	{
 		// Create a new shadow buffer
-		const PtrSize shadowSize = (is3D)
-			? computeVolumeSize(width, height, depth, PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM))
-			: computeSurfaceSize(width, height, PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM));
+		const PtrSize shadowSize = (is3D) ? computeVolumeSize(width, height, depth, Format::R8G8B8A8_UNORM)
+										  : computeSurfaceSize(width, height, Format::R8G8B8A8_UNORM);
 		BufferPtr shadow = getManager().newBuffer(
 			BufferInitInfo(shadowSize, BufferUsageBit::TRANSFER_ALL, BufferMapAccessBit::NONE, "Workaround"));
 		const VkBuffer shadowHandle = static_cast<const BufferImpl&>(*shadow).getHandle();
 		m_microCmdb->pushObjectRef(shadow);
 
-		// Create the copy regions
-		DynamicArrayAuto<VkBufferCopy> copies(m_alloc);
-		if(is3D)
+		// Copy to shadow buffer in batches. If the number of pixels is high and we do a single vkCmdCopyBuffer we will
+		// need many regions. That allocation will be huge so do the copies in batches.
+		const U regionCount = width * height * depth;
+		const U REGIONS_PER_CMD_COPY_BUFFER = 32;
+		const U cmdCopyBufferCount = (regionCount + REGIONS_PER_CMD_COPY_BUFFER - 1) / REGIONS_PER_CMD_COPY_BUFFER;
+		for(U cmdCopyBuffer = 0; cmdCopyBuffer < cmdCopyBufferCount; ++cmdCopyBuffer)
 		{
-			copies.create(width * height * depth);
+			const U beginRegion = cmdCopyBuffer * REGIONS_PER_CMD_COPY_BUFFER;
+			const U endRegion = min(regionCount, (cmdCopyBuffer + 1) * REGIONS_PER_CMD_COPY_BUFFER);
+			ANKI_ASSERT(beginRegion < regionCount);
+			ANKI_ASSERT(endRegion <= regionCount);
+
+			const U crntRegionCount = endRegion - beginRegion;
+			DynamicArrayAuto<VkBufferCopy> regions(m_alloc);
+			regions.create(crntRegionCount);
+
+			// Populate regions
 			U count = 0;
-			for(U x = 0; x < width; ++x)
+			for(U regionIdx = beginRegion; regionIdx < endRegion; ++regionIdx)
 			{
-				for(U y = 0; y < height; ++y)
+				U x, y, d;
+				unflatten3dArrayIndex(width, height, depth, regionIdx, x, y, d);
+
+				VkBufferCopy& c = regions[count++];
+
+				if(is3D)
 				{
-					for(U d = 0; d < depth; ++d)
-					{
-						VkBufferCopy& c = copies[count++];
-						c.srcOffset = (d * height * width + y * width + x) * 3 + offset;
-						c.dstOffset = (d * height * width + y * width + x) * 4 + 0;
-						c.size = 3;
-					}
+					c.srcOffset = (d * height * width + y * width + x) * 3 + offset;
+					c.dstOffset = (d * height * width + y * width + x) * 4 + 0;
 				}
-			}
-		}
-		else
-		{
-			copies.create(width * height);
-			U count = 0;
-			for(U x = 0; x < width; ++x)
-			{
-				for(U y = 0; y < height; ++y)
+				else
 				{
-					VkBufferCopy& c = copies[count++];
 					c.srcOffset = (y * width + x) * 3 + offset;
 					c.dstOffset = (y * width + x) * 4 + 0;
-					c.size = 3;
 				}
+				c.size = 3;
 			}
-		}
 
-		// Copy buffer to buffer
-		ANKI_CMD(vkCmdCopyBuffer(m_handle,
-					 static_cast<const BufferImpl&>(*buff).getHandle(),
-					 shadowHandle,
-					 copies.getSize(),
-					 &copies[0]),
-			ANY_OTHER_COMMAND);
+			// Do the copy to the shadow buffer
+			ANKI_CMD(vkCmdCopyBuffer(m_handle,
+						 static_cast<const BufferImpl&>(*buff).getHandle(),
+						 shadowHandle,
+						 regions.getSize(),
+						 &regions[0]),
+				ANY_OTHER_COMMAND);
+		}
 
 		// Set barrier
 		setBufferBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -799,6 +798,59 @@ void CommandBufferImpl::copyBufferToTextureViewInternal(
 
 	m_microCmdb->pushObjectRef(texView);
 	m_microCmdb->pushObjectRef(buff);
+}
+
+void CommandBufferImpl::rebindDynamicState()
+{
+	m_viewportDirty = true;
+	m_lastViewport = {};
+	m_scissorDirty = true;
+	m_lastScissor = {};
+
+	// Rebind the stencil compare mask
+	if(m_stencilCompareMasks[0] == m_stencilCompareMasks[1])
+	{
+		ANKI_CMD(vkCmdSetStencilCompareMask(
+					 m_handle, VK_STENCIL_FACE_FRONT_BIT | VK_STENCIL_FACE_BACK_BIT, m_stencilCompareMasks[0]),
+			ANY_OTHER_COMMAND);
+	}
+	else
+	{
+		ANKI_CMD(vkCmdSetStencilCompareMask(m_handle, VK_STENCIL_FACE_FRONT_BIT, m_stencilCompareMasks[0]),
+			ANY_OTHER_COMMAND);
+		ANKI_CMD(vkCmdSetStencilCompareMask(m_handle, VK_STENCIL_FACE_BACK_BIT, m_stencilCompareMasks[1]),
+			ANY_OTHER_COMMAND);
+	}
+
+	// Rebind the stencil write mask
+	if(m_stencilWriteMasks[0] == m_stencilWriteMasks[1])
+	{
+		ANKI_CMD(vkCmdSetStencilWriteMask(
+					 m_handle, VK_STENCIL_FACE_FRONT_BIT | VK_STENCIL_FACE_BACK_BIT, m_stencilWriteMasks[0]),
+			ANY_OTHER_COMMAND);
+	}
+	else
+	{
+		ANKI_CMD(
+			vkCmdSetStencilWriteMask(m_handle, VK_STENCIL_FACE_FRONT_BIT, m_stencilWriteMasks[0]), ANY_OTHER_COMMAND);
+		ANKI_CMD(
+			vkCmdSetStencilWriteMask(m_handle, VK_STENCIL_FACE_BACK_BIT, m_stencilWriteMasks[1]), ANY_OTHER_COMMAND);
+	}
+
+	// Rebind the stencil reference
+	if(m_stencilReferenceMasks[0] == m_stencilReferenceMasks[1])
+	{
+		ANKI_CMD(vkCmdSetStencilReference(
+					 m_handle, VK_STENCIL_FACE_FRONT_BIT | VK_STENCIL_FACE_BACK_BIT, m_stencilReferenceMasks[0]),
+			ANY_OTHER_COMMAND);
+	}
+	else
+	{
+		ANKI_CMD(vkCmdSetStencilReference(m_handle, VK_STENCIL_FACE_FRONT_BIT, m_stencilReferenceMasks[0]),
+			ANY_OTHER_COMMAND);
+		ANKI_CMD(vkCmdSetStencilReference(m_handle, VK_STENCIL_FACE_BACK_BIT, m_stencilReferenceMasks[1]),
+			ANY_OTHER_COMMAND);
+	}
 }
 
 } // end namespace anki

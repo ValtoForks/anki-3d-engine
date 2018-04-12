@@ -138,8 +138,6 @@ Error CommandBufferThreadAllocator::newCommandBuffer(CommandBufferFlag cmdbFlags
 				{
 					out = mcmdb;
 				}
-
-				mcmdb->reset();
 			}
 			else
 			{
@@ -183,13 +181,17 @@ Error CommandBufferThreadAllocator::newCommandBuffer(CommandBufferFlag cmdbFlags
 
 		newCmdb->m_fastAlloc = StackAllocator<U8>(m_factory->m_alloc.getMemoryPool().getAllocationCallback(),
 			m_factory->m_alloc.getMemoryPool().getAllocationCallbackUserData(),
-			(smallBatch) ? 1_MB : 1_MB,
+			256_KB,
 			2.0f);
 
 		newCmdb->m_handle = cmdb;
 		newCmdb->m_flags = cmdbFlags;
 
 		out = newCmdb;
+	}
+	else
+	{
+		out->reset();
 	}
 
 	ANKI_ASSERT(out && out->m_refcount.load() == 0);

@@ -9,10 +9,10 @@
 #include <anki/Gr.h>
 #include <anki/collision/Obb.h>
 #include <anki/resource/RenderingKey.h>
-#include <anki/resource/Mesh.h>
-#include <anki/resource/Material.h>
-#include <anki/resource/Skeleton.h>
-#include <anki/resource/Animation.h>
+#include <anki/resource/MeshResource.h>
+#include <anki/resource/MaterialResource.h>
+#include <anki/resource/SkeletonResource.h>
+#include <anki/resource/AnimationResource.h>
 
 namespace anki
 {
@@ -45,12 +45,14 @@ class VertexAttributeInfo
 {
 public:
 	U32 m_bufferBinding;
-	PixelFormat m_format;
+	VertexAttributeLocation m_location;
+	Format m_format;
 	PtrSize m_relativeOffset;
 
 	Bool operator==(const VertexAttributeInfo& b) const
 	{
-		return m_bufferBinding == b.m_bufferBinding && m_format == b.m_format && m_relativeOffset == b.m_relativeOffset;
+		return m_bufferBinding == b.m_bufferBinding && m_format == b.m_format && m_relativeOffset == b.m_relativeOffset
+			   && m_location == b.m_location;
 	}
 
 	Bool operator!=(const VertexAttributeInfo& b) const
@@ -74,13 +76,15 @@ public:
 	U32 m_vertexAttributeCount;
 
 	BufferPtr m_indexBuffer;
+	PtrSize m_indexBufferOffset;
+	IndexType m_indexType;
 };
 
 /// Model patch interface class. Its very important class and it binds the material with the mesh
 class ModelPatch
 {
 public:
-	ModelPatch(Model* model);
+	ModelPatch(ModelResource* model);
 
 	~ModelPatch();
 
@@ -89,12 +93,12 @@ public:
 		return m_mtl;
 	}
 
-	const Mesh& getMesh(const RenderingKey& key) const
+	const MeshResource& getMesh(const RenderingKey& key) const
 	{
 		return *m_meshes[key.m_lod];
 	}
 
-	const Model& getModel() const
+	const ModelResource& getModel() const
 	{
 		ANKI_ASSERT(m_model);
 		return *m_model;
@@ -107,23 +111,26 @@ public:
 
 	const Obb& getBoundingShapeSub(U32 subMeshId) const
 	{
-		return m_meshes[0]->getBoundingShapeSub(subMeshId);
+		U32 firstIdx, idxCount;
+		const Obb* obb;
+		m_meshes[0]->getSubMeshInfo(subMeshId, firstIdx, idxCount, obb);
+		return *obb;
 	}
 
-	U32 getSubMeshesCount() const
+	U32 getSubMeshCount() const
 	{
-		return m_meshes[0]->getSubMeshesCount();
+		return m_meshes[0]->getSubMeshCount();
 	}
 
 	ANKI_USE_RESULT Error create(
-		WeakArray<CString> meshFNames, const CString& mtlFName, Bool async, ResourceManager* resources);
+		ConstWeakArray<CString> meshFNames, const CString& mtlFName, Bool async, ResourceManager* resources);
 
 	/// Get information for multiDraw rendering. Given an array of submeshes that are visible return the correct indices
 	/// offsets and counts.
 	void getRenderingDataSub(const RenderingKey& key, WeakArray<U8> subMeshIndicesArray, ModelRenderingInfo& inf) const;
 
 private:
-	Model* m_model ANKI_DBG_NULLIFY;
+	ModelResource* m_model ANKI_DBG_NULLIFY;
 
 	Array<MeshResourcePtr, MAX_LOD_COUNT> m_meshes; ///< One for each LOD
 	U8 m_meshCount = 0;
@@ -160,12 +167,12 @@ private:
 /// - If the materials need texture coords then mesh should have them
 /// - The skeleton and skelAnims are optional
 /// - Its an error to have skelAnims without skeleton
-class Model : public ResourceObject
+class ModelResource : public ResourceObject
 {
 public:
-	Model(ResourceManager* manager);
+	ModelResource(ResourceManager* manager);
 
-	~Model();
+	~ModelResource();
 
 	const DynamicArray<ModelPatch*>& getModelPatches() const
 	{

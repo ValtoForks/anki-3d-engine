@@ -68,8 +68,8 @@ Error SceneGraph::init(AllocAlignedCallback allocCb,
 	ThreadPool* threadpool,
 	ThreadHive* threadHive,
 	ResourceManager* resources,
-	StagingGpuMemoryManager* stagingMem,
 	Input* input,
+	ScriptManager* scriptManager,
 	const Timestamp* globalTimestamp,
 	const ConfigSet& config)
 {
@@ -77,11 +77,11 @@ Error SceneGraph::init(AllocAlignedCallback allocCb,
 	m_threadpool = threadpool;
 	m_threadHive = threadHive;
 	m_resources = resources;
-	m_stagingAlloc = stagingMem;
 	m_objectsMarkedForDeletionCount.store(0);
 	m_gr = &m_resources->getGrManager();
 	m_physics = &m_resources->getPhysicsWorld();
 	m_input = input;
+	m_scriptManager = scriptManager;
 
 	m_alloc = SceneAllocator<U8>(allocCb, allocCbData, 1024 * 10, 1.0, 0);
 	m_frameAlloc = SceneFrameAllocator<U8>(allocCb, allocCbData, 1 * 1024 * 1024);
@@ -192,6 +192,8 @@ Error SceneGraph::update(Second prevUpdateTime, Second crntTime)
 	ANKI_ASSERT(m_mainCam);
 	ANKI_TRACE_SCOPED_EVENT(SCENE_UPDATE);
 
+	m_stats.m_updateTime = HighRezTimer::getCurrentTime();
+
 	m_timestamp = *m_globalTimestamp;
 
 	// Reset the framepool
@@ -233,12 +235,15 @@ Error SceneGraph::update(Second prevUpdateTime, Second crntTime)
 	ANKI_CHECK(threadPool.waitForAllThreadsToFinish());
 	ANKI_TRACE_STOP_EVENT(SCENE_NODES_UPDATE);
 
+	m_stats.m_updateTime = HighRezTimer::getCurrentTime() - m_stats.m_updateTime;
 	return Error::NONE;
 }
 
 void SceneGraph::doVisibilityTests(RenderQueue& rqueue)
 {
+	m_stats.m_visibilityTestsTime = HighRezTimer::getCurrentTime();
 	anki::doVisibilityTests(*m_mainCam, *this, rqueue);
+	m_stats.m_visibilityTestsTime = HighRezTimer::getCurrentTime() - m_stats.m_visibilityTestsTime;
 }
 
 Error SceneGraph::updateNode(Second prevTime, Second crntTime, SceneNode& node)

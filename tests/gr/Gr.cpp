@@ -176,8 +176,6 @@ layout(location = 0) in vec2 in_uv;
 layout(ANKI_TEX_BINDING(0, 0)) uniform sampler2D u_tex0;
 layout(ANKI_TEX_BINDING(0, 1)) uniform sampler2D u_tex1;
 
-ANKI_USING_FRAG_COORD(768)
-
 void main()
 {
 	if(anki_fragCoord.x < 1024 / 2)
@@ -286,29 +284,29 @@ static NativeWindow* win = nullptr;
 static GrManager* gr = nullptr;
 static StagingGpuMemoryManager* stagingMem = nullptr;
 
-#define COMMON_BEGIN()                                                          \
-	stagingMem = new StagingGpuMemoryManager();                                 \
-	Config cfg;                                                                 \
-	cfg.set("width", WIDTH);                                                    \
-	cfg.set("height", HEIGHT);                                                  \
-	cfg.set("window.debugContext", true);                                       \
-	cfg.set("window.vsync", false);                                             \
-	win = createWindow(cfg);                                                    \
-	gr = createGrManager(cfg, win);                                             \
-	ANKI_TEST_EXPECT_NO_ERR(stagingMem->init(gr, Config()));                    \
-	TransferGpuAllocator* transfAlloc = new TransferGpuAllocator();             \
+#define COMMON_BEGIN() \
+	stagingMem = new StagingGpuMemoryManager(); \
+	Config cfg; \
+	cfg.set("width", WIDTH); \
+	cfg.set("height", HEIGHT); \
+	cfg.set("window.debugContext", true); \
+	cfg.set("window.vsync", false); \
+	win = createWindow(cfg); \
+	gr = createGrManager(cfg, win); \
+	ANKI_TEST_EXPECT_NO_ERR(stagingMem->init(gr, Config())); \
+	TransferGpuAllocator* transfAlloc = new TransferGpuAllocator(); \
 	ANKI_TEST_EXPECT_NO_ERR(transfAlloc->init(128_MB, gr, gr->getAllocator())); \
 	{
 
-#define COMMON_END()               \
-	}                              \
-	gr->finish();                  \
-	delete transfAlloc;            \
-	delete stagingMem;             \
+#define COMMON_END() \
+	} \
+	gr->finish(); \
+	delete transfAlloc; \
+	delete stagingMem; \
 	GrManager::deleteInstance(gr); \
-	delete win;                    \
-	win = nullptr;                 \
-	gr = nullptr;                  \
+	delete win; \
+	win = nullptr; \
+	gr = nullptr; \
 	stagingMem = nullptr;
 
 static void* setUniforms(PtrSize size, CommandBufferPtr& cmdb, U set, U binding)
@@ -330,27 +328,27 @@ static void* setStorage(PtrSize size, CommandBufferPtr& cmdb, U set, U binding)
 #define SET_UNIFORMS(type_, size_, cmdb_, set_, binding_) static_cast<type_>(setUniforms(size_, cmdb_, set_, binding_))
 #define SET_STORAGE(type_, size_, cmdb_, set_, binding_) static_cast<type_>(setStorage(size_, cmdb_, set_, binding_))
 
-#define UPLOAD_TEX_SURFACE(cmdb_, tex_, surf_, ptr_, size_, handle_)                                        \
-	do                                                                                                      \
-	{                                                                                                       \
-		ANKI_TEST_EXPECT_NO_ERR(transfAlloc->allocate(size_, handle_));                                     \
-		void* f = handle_.getMappedMemory();                                                                \
-		memcpy(f, ptr_, size_);                                                                             \
-		TextureViewPtr view = gr->newTextureView(TextureViewInitInfo(tex_, surf_));                         \
+#define UPLOAD_TEX_SURFACE(cmdb_, tex_, surf_, ptr_, size_, handle_) \
+	do \
+	{ \
+		ANKI_TEST_EXPECT_NO_ERR(transfAlloc->allocate(size_, handle_)); \
+		void* f = handle_.getMappedMemory(); \
+		memcpy(f, ptr_, size_); \
+		TextureViewPtr view = gr->newTextureView(TextureViewInitInfo(tex_, surf_)); \
 		cmdb_->copyBufferToTextureView(handle_.getBuffer(), handle_.getOffset(), handle_.getRange(), view); \
 	} while(0)
 
-#define UPLOAD_TEX_VOL(cmdb_, tex_, vol_, ptr_, size_, handle_)                                             \
-	do                                                                                                      \
-	{                                                                                                       \
-		ANKI_TEST_EXPECT_NO_ERR(transfAlloc->allocate(size_, handle_));                                     \
-		void* f = handle_.getMappedMemory();                                                                \
-		memcpy(f, ptr_, size_);                                                                             \
-		TextureViewPtr view = gr->newTextureView(TextureViewInitInfo(tex_, vol_));                          \
+#define UPLOAD_TEX_VOL(cmdb_, tex_, vol_, ptr_, size_, handle_) \
+	do \
+	{ \
+		ANKI_TEST_EXPECT_NO_ERR(transfAlloc->allocate(size_, handle_)); \
+		void* f = handle_.getMappedMemory(); \
+		memcpy(f, ptr_, size_); \
+		TextureViewPtr view = gr->newTextureView(TextureViewInitInfo(tex_, vol_)); \
 		cmdb_->copyBufferToTextureView(handle_.getBuffer(), handle_.getOffset(), handle_.getRange(), view); \
 	} while(0)
 
-const PixelFormat DS_FORMAT = PixelFormat(ComponentFormat::D24S8, TransformFormat::UNORM);
+const Format DS_FORMAT = Format::D24_UNORM_S8_UINT;
 
 static ShaderPtr createShader(
 	CString src, ShaderType type, GrManager& gr, ConstWeakArray<ShaderSpecializationConstValue> specVals = {})
@@ -582,7 +580,7 @@ ANKI_TEST(Gr, ViewportAndScissorOffscreen)
 	ShaderProgramPtr prog = createProgram(VERT_QUAD_STRIP_SRC, FRAG_SRC, *gr);
 	ShaderProgramPtr blitProg = createProgram(VERT_QUAD_SRC, FRAG_TEX_SRC, *gr);
 
-	const PixelFormat COL_FORMAT = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+	const Format COL_FORMAT = Format::R8G8B8A8_UNORM;
 	const U RT_WIDTH = 32;
 	const U RT_HEIGHT = 16;
 	TextureInitInfo init;
@@ -852,9 +850,9 @@ ANKI_TEST(Gr, DrawWithVertex)
 
 		cmdb->bindVertexBuffer(0, b, 0, sizeof(Vert));
 		cmdb->bindVertexBuffer(1, c, 0, sizeof(Vec3));
-		cmdb->setVertexAttribute(0, 0, PixelFormat(ComponentFormat::R32G32B32, TransformFormat::FLOAT), 0);
-		cmdb->setVertexAttribute(1, 0, PixelFormat(ComponentFormat::R8G8B8, TransformFormat::UNORM), sizeof(Vec3));
-		cmdb->setVertexAttribute(2, 1, PixelFormat(ComponentFormat::R32G32B32, TransformFormat::FLOAT), 0);
+		cmdb->setVertexAttribute(0, 0, Format::R32G32B32_SFLOAT, 0);
+		cmdb->setVertexAttribute(1, 0, Format::R8G8B8_UNORM, sizeof(Vec3));
+		cmdb->setVertexAttribute(2, 1, Format::R32G32B32_SFLOAT, 0);
 
 		cmdb->setViewport(0, 0, WIDTH, HEIGHT);
 		cmdb->setPolygonOffset(0.0, 0.0);
@@ -894,7 +892,7 @@ ANKI_TEST(Gr, Texture)
 
 	TextureInitInfo init;
 	init.m_depth = 1;
-	init.m_format = PixelFormat(ComponentFormat::R8G8B8, TransformFormat::UNORM);
+	init.m_format = Format::R8G8B8_UNORM;
 	init.m_usage = TextureUsageBit::SAMPLED_FRAGMENT;
 	init.m_height = 4;
 	init.m_width = 4;
@@ -930,7 +928,7 @@ ANKI_TEST(Gr, DrawWithTexture)
 	//
 	TextureInitInfo init;
 	init.m_depth = 1;
-	init.m_format = PixelFormat(ComponentFormat::R8G8B8, TransformFormat::UNORM);
+	init.m_format = Format::R8G8B8_UNORM;
 	init.m_usage = TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::TRANSFER_DESTINATION;
 	init.m_initialUsage = TextureUsageBit::SAMPLED_FRAGMENT;
 	init.m_height = 2;
@@ -1135,7 +1133,7 @@ static void drawOffscreenDrawcalls(GrManager& gr,
 	*color = Vec4(0.0, 1.0, 0.0, 0.0);
 
 	cmdb->bindVertexBuffer(0, vertBuff, 0, sizeof(Vec3));
-	cmdb->setVertexAttribute(0, 0, PixelFormat(ComponentFormat::R32G32B32, TransformFormat::FLOAT), 0);
+	cmdb->setVertexAttribute(0, 0, Format::R32G32B32_SFLOAT, 0);
 	cmdb->bindShaderProgram(prog);
 	cmdb->bindIndexBuffer(indexBuff, 0, IndexType::U16);
 	cmdb->setViewport(0, 0, viewPortSize, viewPortSize);
@@ -1164,7 +1162,7 @@ static void drawOffscreen(GrManager& gr, Bool useSecondLevel)
 	samplerInit.m_mipmapFilter = SamplingFilter::LINEAR;
 	SamplerPtr sampler = gr.newSampler(samplerInit);
 
-	const PixelFormat COL_FORMAT = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+	const Format COL_FORMAT = Format::R8G8B8A8_UNORM;
 	const U TEX_SIZE = 256;
 
 	TextureInitInfo init;
@@ -1333,7 +1331,7 @@ ANKI_TEST(Gr, ImageLoadStore)
 	init.m_mipmapCount = 2;
 	init.m_usage = TextureUsageBit::CLEAR | TextureUsageBit::SAMPLED_ALL | TextureUsageBit::IMAGE_COMPUTE_WRITE;
 	init.m_type = TextureType::_2D;
-	init.m_format = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+	init.m_format = Format::R8G8B8A8_UNORM;
 
 	TexturePtr tex = gr->newTexture(init);
 
@@ -1447,7 +1445,7 @@ ANKI_TEST(Gr, 3DTextures)
 	//
 	TextureInitInfo init;
 	init.m_depth = 1;
-	init.m_format = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+	init.m_format = Format::R8G8B8A8_UNORM;
 	init.m_usage = TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::TRANSFER_DESTINATION;
 	init.m_initialUsage = TextureUsageBit::TRANSFER_DESTINATION;
 	init.m_height = 2;
@@ -1590,7 +1588,7 @@ static RenderTargetDescription newRTDescr(CString name)
 	RenderTargetDescription texInf(name);
 	texInf.m_width = texInf.m_height = 16;
 	texInf.m_usage = TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE | TextureUsageBit::SAMPLED_FRAGMENT;
-	texInf.m_format = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+	texInf.m_format = Format::R8G8B8A8_UNORM;
 	texInf.bake();
 	return texInf;
 }
@@ -1608,7 +1606,7 @@ ANKI_TEST(Gr, RenderGraph)
 	TextureInitInfo texI("dummy");
 	texI.m_width = texI.m_height = 16;
 	texI.m_usage = TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE | TextureUsageBit::SAMPLED_FRAGMENT;
-	texI.m_format = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+	texI.m_format = Format::R8G8B8A8_UNORM;
 	TexturePtr dummyTex = gr->newTexture(texI);
 
 	// SM
@@ -1865,7 +1863,7 @@ void main()
 	// Create the texture
 	TextureInitInfo texInit;
 	texInit.m_width = texInit.m_height = 8;
-	texInit.m_format = PixelFormat(ComponentFormat::R8G8B8, TransformFormat::UINT);
+	texInit.m_format = Format::R8G8B8_UINT;
 	texInit.m_type = TextureType::_2D;
 	texInit.m_usage = TextureUsageBit::TRANSFER_DESTINATION | TextureUsageBit::SAMPLED_ALL;
 	texInit.m_mipmapCount = 2;
@@ -2034,6 +2032,125 @@ void main()
 
 	cmdb->setViewport(0, 0, WIDTH, HEIGHT);
 	cmdb->bindShaderProgram(prog);
+	cmdb->bindStorageBuffer(0, 0, resultBuff, 0, resultBuff->getSize());
+	cmdb->beginRenderPass(createDefaultFb(*gr), {}, {});
+	cmdb->drawArrays(PrimitiveTopology::TRIANGLES, 3);
+	cmdb->endRenderPass();
+	cmdb->flush();
+
+	gr->swapBuffers();
+	gr->finish();
+
+	// Get the result
+	UVec4* result = static_cast<UVec4*>(resultBuff->map(0, resultBuff->getSize(), BufferMapAccessBit::READ));
+	ANKI_TEST_EXPECT_EQ(result->x(), 2);
+	ANKI_TEST_EXPECT_EQ(result->y(), 2);
+	ANKI_TEST_EXPECT_EQ(result->z(), 2);
+	ANKI_TEST_EXPECT_EQ(result->w(), 2);
+	resultBuff->unmap();
+
+	COMMON_END()
+}
+
+ANKI_TEST(Gr, PushConsts)
+{
+	COMMON_BEGIN()
+
+	static const char* VERT_SRC = R"(
+struct PC
+{
+	vec4 color;
+	ivec4 icolor;
+	vec4 arr[2];
+	mat4 mat;
+};
+ANKI_PUSH_CONSTANTS(PC, regs);
+	
+out gl_PerVertex
+{
+	vec4 gl_Position;
+};
+	
+layout(location = 0) out vec4 out_color;
+
+void main()
+{
+	vec2 uv = vec2(gl_VertexID & 1, gl_VertexID >> 1) * 2.0;
+	vec2 pos = uv * 2.0 - 1.0;
+	gl_Position = vec4(pos, 0.0, 1.0);
+	
+	out_color = regs.color;
+}
+)";
+
+	static const char* FRAG_SRC = R"(
+struct PC
+{
+	vec4 color;
+	ivec4 icolor;
+	vec4 arr[2];
+	mat4 mat;
+};
+ANKI_PUSH_CONSTANTS(PC, regs);
+	
+layout(location = 0) in vec4 in_color;
+layout(location = 0) out vec4 out_color;
+
+layout(ANKI_SS_BINDING(0, 0)) buffer s_
+{
+	uvec4 u_result;
+};
+
+void main()
+{
+	out_color = vec4(1.0);
+
+	if(gl_FragCoord.x == 0.5 && gl_FragCoord.y == 0.5)
+	{
+		if(in_color != vec4(1.0, 0.0, 1.0, 0.0) || regs.icolor != ivec4(-1, 1, 2147483647, -2147483647)
+			|| regs.arr[0] != vec4(1, 2, 3, 4) || regs.arr[1] != vec4(10, 20, 30, 40)
+			|| regs.mat[1][0] != 0.5)
+		{
+			u_result = uvec4(1u);
+		}
+		else
+		{
+			u_result = uvec4(2u);
+		}
+	}
+}
+)";
+
+	ShaderProgramPtr prog = createProgram(VERT_SRC, FRAG_SRC, *gr);
+
+	// Create the result buffer
+	BufferPtr resultBuff = gr->newBuffer(
+		BufferInitInfo(sizeof(UVec4), BufferUsageBit::STORAGE_ALL | BufferUsageBit::FILL, BufferMapAccessBit::READ));
+
+	// Draw
+	gr->beginFrame();
+
+	CommandBufferInitInfo cinit;
+	cinit.m_flags = CommandBufferFlag::GRAPHICS_WORK;
+	CommandBufferPtr cmdb = gr->newCommandBuffer(cinit);
+
+	cmdb->fillBuffer(resultBuff, 0, resultBuff->getSize(), 0);
+	cmdb->setBufferBarrier(
+		resultBuff, BufferUsageBit::FILL, BufferUsageBit::STORAGE_FRAGMENT_WRITE, 0, resultBuff->getSize());
+
+	cmdb->setViewport(0, 0, WIDTH, HEIGHT);
+	cmdb->bindShaderProgram(prog);
+
+	struct PushConstants
+	{
+		Vec4 m_color = Vec4(1.0, 0.0, 1.0, 0.0);
+		IVec4 m_icolor = IVec4(-1, 1, 2147483647, -2147483647);
+		Vec4 m_arr[2] = {Vec4(1, 2, 3, 4), Vec4(10, 20, 30, 40)};
+		Mat4 m_mat = Mat4(0.0f);
+	} pc;
+	pc.m_mat(0, 1) = 0.5f;
+	cmdb->setPushConstants(&pc, sizeof(pc));
+
 	cmdb->bindStorageBuffer(0, 0, resultBuff, 0, resultBuff->getSize());
 	cmdb->beginRenderPass(createDefaultFb(*gr), {}, {});
 	cmdb->drawArrays(PrimitiveTopology::TRIANGLES, 3);

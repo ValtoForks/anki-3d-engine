@@ -27,7 +27,8 @@ public:
 
 	~UiManager();
 
-	ANKI_USE_RESULT Error init(HeapAllocator<U8> alloc,
+	ANKI_USE_RESULT Error init(AllocAlignedCallback allocCallback,
+		void* allocCallbackUserData,
 		ResourceManager* resources,
 		GrManager* gr,
 		StagingGpuMemoryManager* gpuMem,
@@ -60,6 +61,15 @@ public:
 	{
 		ANKI_ASSERT(m_input);
 		return *m_input;
+	}
+
+	/// Create a new UI object.
+	template<typename T, typename Y, typename... Args>
+	ANKI_USE_RESULT Error newInstance(IntrusivePtr<Y>& ptr, Args&&... args)
+	{
+		T* p = m_alloc.newInstance<T>(this);
+		ptr.reset(static_cast<Y*>(p));
+		return p->init(args...);
 	}
 
 	/// Create a new UI object.

@@ -5,14 +5,4 @@
 
 #pragma once
 
-#include <anki/util/StdTypes.h>
-
-namespace anki
-{
-
-/// Timestamp type
-using Timestamp = U64;
-
-const U64 MAX_TIMESTAMP = MAX_U64;
-
-} // end namespace anki
+#include <anki/script/Common.h>

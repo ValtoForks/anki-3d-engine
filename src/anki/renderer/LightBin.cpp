@@ -30,7 +30,7 @@ class ShaderPointLight
 public:
 	Vec4 m_posRadius;
 	Vec4 m_diffuseColorTileSize;
-	Vec4 m_specularColorRadius;
+	Vec4 m_radiusPad3;
 	UVec4 m_atlasTilesPad2;
 };
 
@@ -39,8 +39,7 @@ class ShaderSpotLight
 public:
 	Vec4 m_posRadius;
 	Vec4 m_diffuseColorShadowmapId;
-	Vec4 m_specularColorRadius;
-	Vec4 m_lightDir;
+	Vec4 m_lightDirRadius;
 	Vec4 m_outerCosInnerCos;
 	Mat4 m_texProjectionMat; ///< Texture projection matrix
 };
@@ -136,8 +135,8 @@ public:
 
 	Bool operator<(const ClusterProbeIndex& b) const
 	{
-		ANKI_ASSERT(m_probeRadius > 0.0 && b.m_probeRadius > 0.0);
-		return m_probeRadius < b.m_probeRadius;
+		ANKI_ASSERT(m_probeRadius > 0 && b.m_probeRadius > 0);
+		return (m_probeRadius != b.m_probeRadius) ? (m_probeRadius > b.m_probeRadius) : (m_index < b.m_index);
 	}
 
 private:
@@ -320,8 +319,8 @@ public:
 
 	TextureViewPtr m_diffDecalTexAtlas;
 	SpinLock m_diffDecalTexAtlasMtx;
-	TextureViewPtr m_normalRoughnessDecalTexAtlas;
-	SpinLock m_normalRoughnessDecalTexAtlasMtx;
+	TextureViewPtr m_specularRoughnessDecalTexAtlas;
+	SpinLock m_specularRoughnessDecalTexAtlasMtx;
 
 	LightBin* m_bin = nullptr;
 };
@@ -494,7 +493,7 @@ Error LightBin::bin(const Mat4& viewMat,
 	ANKI_CHECK(m_threadPool->waitForAllThreadsToFinish());
 
 	out.m_diffDecalTexView = ctx.m_diffDecalTexAtlas;
-	out.m_normRoughnessDecalTexView = ctx.m_normalRoughnessDecalTexAtlas;
+	out.m_specularRoughnessDecalTexView = ctx.m_specularRoughnessDecalTexAtlas;
 
 	return Error::NONE;
 }
@@ -669,7 +668,7 @@ void LightBin::writeAndBinPointLight(
 		slight.m_atlasTilesPad2 = UVec4(lightEl.m_atlasTiles.x(), lightEl.m_atlasTiles.y(), 0, 0);
 	}
 
-	slight.m_specularColorRadius = Vec4(lightEl.m_specularColor, lightEl.m_radius);
+	slight.m_radiusPad3 = Vec4(lightEl.m_radius);
 
 	// Now bin it
 	Sphere sphere(lightEl.m_worldPosition.xyz0(), lightEl.m_radius);
@@ -717,12 +716,9 @@ void LightBin::writeAndBinSpotLight(
 	// Diff color and shadowmap ID now
 	light.m_diffuseColorShadowmapId = Vec4(lightEl.m_diffuseColor, shadowmapIndex);
 
-	// Spec color
-	light.m_specularColorRadius = Vec4(lightEl.m_specularColor, lightEl.m_distance);
-
-	// Light dir
+	// Light dir & radius
 	Vec3 lightDir = -lightEl.m_worldTransform.getRotationPart().getZAxis();
-	light.m_lightDir = Vec4(lightDir, 0.0f);
+	light.m_lightDirRadius = Vec4(lightDir, lightEl.m_distance);
 
 	// Angles
 	light.m_outerCosInnerCos = Vec4(cos(lightEl.m_outerAngle / 2.0f), cos(lightEl.m_innerAngle / 2.0f), 1.0f, 1.0f);
@@ -807,20 +803,20 @@ void LightBin::writeAndBinDecal(const DecalQueueElement& decalEl, LightBinContex
 		ctx.m_diffDecalTexAtlas = atlas;
 	}
 
-	atlas.reset(const_cast<TextureView*>(decalEl.m_normalRoughnessAtlas));
-	uv = decalEl.m_normalRoughnessAtlasUv;
+	atlas.reset(const_cast<TextureView*>(decalEl.m_specularRoughnessAtlas));
+	uv = decalEl.m_specularRoughnessAtlasUv;
 	decal.m_normRoughnessUv = Vec4(uv.x(), uv.y(), uv.z() - uv.x(), uv.w() - uv.y());
-	decal.m_blendFactors[1] = decalEl.m_normalRoughnessAtlasBlendFactor;
+	decal.m_blendFactors[1] = decalEl.m_specularRoughnessAtlasBlendFactor;
 
 	if(atlas)
 	{
-		LockGuard<SpinLock> lock(ctx.m_normalRoughnessDecalTexAtlasMtx);
-		if(ctx.m_normalRoughnessDecalTexAtlas && ctx.m_normalRoughnessDecalTexAtlas != atlas)
+		LockGuard<SpinLock> lock(ctx.m_specularRoughnessDecalTexAtlasMtx);
+		if(ctx.m_specularRoughnessDecalTexAtlas && ctx.m_specularRoughnessDecalTexAtlas != atlas)
 		{
 			ANKI_R_LOGF("All decals should have the same tex atlas");
 		}
 
-		ctx.m_normalRoughnessDecalTexAtlas = atlas;
+		ctx.m_specularRoughnessDecalTexAtlas = atlas;
 	}
 
 	// bias * proj_l * view_

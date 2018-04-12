@@ -12,7 +12,13 @@ namespace anki
 
 CommandBuffer* CommandBuffer::newInstance(GrManager* manager, const CommandBufferInitInfo& init)
 {
-	return CommandBufferImpl::newInstanceHelper(manager, init);
+	CommandBufferImpl* impl = manager->getAllocator().newInstance<CommandBufferImpl>(manager, init.getName());
+	Error err = impl->init(init);
+	if(err)
+	{
+		manager->getAllocator().deleteInstance(impl);
+	}
+	return impl;
 }
 
 CommandBufferInitHints CommandBuffer::computeInitHints() const
@@ -44,7 +50,7 @@ void CommandBuffer::bindVertexBuffer(
 	self.bindVertexBuffer(binding, buff, offset, stride, stepRate);
 }
 
-void CommandBuffer::setVertexAttribute(U32 location, U32 buffBinding, const PixelFormat& fmt, PtrSize relativeOffset)
+void CommandBuffer::setVertexAttribute(U32 location, U32 buffBinding, Format fmt, PtrSize relativeOffset)
 {
 	ANKI_VK_SELF(CommandBufferImpl);
 	self.setVertexAttribute(location, buffBinding, fmt, relativeOffset);
@@ -187,8 +193,7 @@ void CommandBuffer::bindImage(U32 set, U32 binding, TextureViewPtr img)
 	self.bindImage(set, binding, img);
 }
 
-void CommandBuffer::bindTextureBuffer(
-	U32 set, U32 binding, BufferPtr buff, PtrSize offset, PtrSize range, PixelFormat fmt)
+void CommandBuffer::bindTextureBuffer(U32 set, U32 binding, BufferPtr buff, PtrSize offset, PtrSize range, Format fmt)
 {
 	ANKI_ASSERT(!"TODO");
 }
@@ -351,6 +356,12 @@ Bool CommandBuffer::isEmpty() const
 {
 	ANKI_VK_SELF_CONST(CommandBufferImpl);
 	return self.isEmpty();
+}
+
+void CommandBuffer::setPushConstants(const void* data, U32 dataSize)
+{
+	ANKI_VK_SELF(CommandBufferImpl);
+	self.setPushConstants(data, dataSize);
 }
 
 } // end namespace anki

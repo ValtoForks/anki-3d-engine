@@ -32,11 +32,7 @@ public:
 		m_faceCount =
 			(tex->getTextureType() == TextureType::CUBE_ARRAY || tex->getTextureType() == TextureType::CUBE) ? 6 : 1;
 
-		const PixelFormat fmt = tex->getPixelFormat();
-		m_depthStencilAspect =
-			(componentFormatIsDepth(fmt.m_components)) ? DepthStencilAspectBit::DEPTH : DepthStencilAspectBit::NONE;
-		m_depthStencilAspect |=
-			(componentFormatIsStencil(fmt.m_components)) ? DepthStencilAspectBit::STENCIL : DepthStencilAspectBit::NONE;
+		m_depthStencilAspect = computeFormatAspect(tex->getFormat());
 	}
 
 	TextureViewInitInfo(CString name = {})
@@ -100,8 +96,8 @@ protected:
 	TextureSubresourceInfo m_subresource;
 
 	/// Construct.
-	TextureView(GrManager* manager)
-		: GrObject(manager, CLASS_TYPE)
+	TextureView(GrManager* manager, CString name)
+		: GrObject(manager, CLASS_TYPE, name)
 	{
 		m_subresource.m_depthStencilAspect = DepthStencilAspectBit::NONE;
 
@@ -123,9 +119,9 @@ protected:
 	Bool initialized() const
 	{
 		return m_texType != TextureType::COUNT && m_subresource.m_firstMipmap < MAX_U32
-			&& m_subresource.m_mipmapCount < MAX_U32 && m_subresource.m_firstLayer < MAX_U32
-			&& m_subresource.m_layerCount < MAX_U32 && m_subresource.m_firstFace < MAX_U8
-			&& m_subresource.m_faceCount < MAX_U8;
+			   && m_subresource.m_mipmapCount < MAX_U32 && m_subresource.m_firstLayer < MAX_U32
+			   && m_subresource.m_layerCount < MAX_U32 && m_subresource.m_firstFace < MAX_U8
+			   && m_subresource.m_faceCount < MAX_U8;
 	}
 
 private:

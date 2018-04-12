@@ -22,16 +22,17 @@ public:
 	U32 m_depth = 1; //< Relevant only for 3D textures.
 	U32 m_layerCount = 1; ///< Relevant only for texture arrays.
 
+	Format m_format = Format::NONE;
+
 	TextureUsageBit m_usage = TextureUsageBit::NONE; ///< How the texture will be used.
 	TextureUsageBit m_initialUsage = TextureUsageBit::NONE; ///< Its initial usage.
 	TextureType m_type = TextureType::_2D;
 
 	U8 m_mipmapCount = 1;
 
-	PixelFormat m_format;
 	U8 m_samples = 1;
 
-	U8 _m_padding = 0;
+	U8 _m_padding[3] = {0, 0, 0};
 
 	TextureInitInfo() = default;
 
@@ -46,22 +47,24 @@ public:
 		const U8* const last = reinterpret_cast<const U8* const>(&m_samples) + sizeof(m_samples);
 		const U size = last - first;
 		ANKI_ASSERT(size
-			== sizeof(U32) * 4 + sizeof(TextureUsageBit) * 2 + sizeof(TextureType) + sizeof(U8) + sizeof(PixelFormat)
-				+ sizeof(U8));
+					== sizeof(m_width) + sizeof(m_height) + sizeof(m_depth) + sizeof(m_layerCount) + sizeof(m_format)
+						   + sizeof(m_usage) + sizeof(m_initialUsage) + sizeof(m_type) + sizeof(m_mipmapCount)
+						   + sizeof(m_samples));
 		return anki::computeHash(first, size);
 	}
 
 	Bool isValid() const
 	{
 #define ANKI_CHECK_VAL_VALIDITY(x) \
-	do                             \
-	{                              \
-		if(!(x))                   \
-		{                          \
-			return false;          \
-		}                          \
+	do \
+	{ \
+		if(!(x)) \
+		{ \
+			return false; \
+		} \
 	} while(0)
 
+		ANKI_CHECK_VAL_VALIDITY(m_format != Format::NONE);
 		ANKI_CHECK_VAL_VALIDITY(m_usage != TextureUsageBit::NONE);
 		ANKI_CHECK_VAL_VALIDITY(m_mipmapCount > 0);
 		ANKI_CHECK_VAL_VALIDITY(m_width > 0);
@@ -144,24 +147,23 @@ public:
 		return m_usage;
 	}
 
-	const PixelFormat& getPixelFormat() const
+	Format getFormat() const
 	{
-		ANKI_ASSERT(m_format.isValid());
+		ANKI_ASSERT(m_format != Format::NONE);
 		return m_format;
 	}
 
 	DepthStencilAspectBit getDepthStencilAspect() const
 	{
-		ANKI_ASSERT(m_format.isValid());
 		return m_aspect;
 	}
 
 	Bool isSubresourceValid(const TextureSubresourceInfo& subresource) const
 	{
 #define ANKI_TEX_SUBRESOURCE_ASSERT(x_) \
-	if(!(x_))                           \
-	{                                   \
-		return false;                   \
+	if(!(x_)) \
+	{ \
+		return false; \
 	}
 		const TextureType type = m_texType;
 		const Bool cube = textureTypeIsCube(type);
@@ -200,8 +202,8 @@ public:
 		if(m_texType != TextureType::_3D)
 		{
 			return subresource.m_firstMipmap == 0 && subresource.m_mipmapCount == m_mipCount
-				&& subresource.m_faceCount == 1 && subresource.m_layerCount == 1
-				&& subresource.m_depthStencilAspect == m_aspect;
+				   && subresource.m_faceCount == 1 && subresource.m_layerCount == 1
+				   && subresource.m_depthStencilAspect == m_aspect;
 		}
 		else
 		{
@@ -224,8 +226,8 @@ public:
 		ANKI_ASSERT(isSubresourceValid(subresource));
 		/// Can bound only one aspect at a time.
 		return subresource.m_depthStencilAspect == DepthStencilAspectBit::DEPTH
-			|| subresource.m_depthStencilAspect == DepthStencilAspectBit::STENCIL
-			|| subresource.m_depthStencilAspect == DepthStencilAspectBit::NONE;
+			   || subresource.m_depthStencilAspect == DepthStencilAspectBit::STENCIL
+			   || subresource.m_depthStencilAspect == DepthStencilAspectBit::NONE;
 	}
 
 	/// Return true if the subresource can be used in CommandBuffer::copyBufferToTextureView.
@@ -233,7 +235,7 @@ public:
 	{
 		ANKI_ASSERT(isSubresourceValid(subresource));
 		return subresource.m_faceCount == 1 && subresource.m_mipmapCount == 1 && subresource.m_layerCount == 1
-			&& subresource.m_depthStencilAspect == DepthStencilAspectBit::NONE;
+			   && subresource.m_depthStencilAspect == DepthStencilAspectBit::NONE;
 	}
 
 	/// Return true if the subresource can be used as Framebuffer attachment.
@@ -251,12 +253,12 @@ protected:
 	U32 m_mipCount = 0;
 	TextureType m_texType = TextureType::COUNT;
 	TextureUsageBit m_usage = TextureUsageBit::NONE;
-	PixelFormat m_format;
+	Format m_format = Format::NONE;
 	DepthStencilAspectBit m_aspect = DepthStencilAspectBit::NONE;
 
 	/// Construct.
-	Texture(GrManager* manager)
-		: GrObject(manager, CLASS_TYPE)
+	Texture(GrManager* manager, CString name)
+		: GrObject(manager, CLASS_TYPE, name)
 	{
 	}
 

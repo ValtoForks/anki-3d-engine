@@ -6,7 +6,7 @@
 #include <anki/scene/StaticGeometryNode.h>
 #include <anki/scene/SceneGraph.h>
 #include <anki/resource/ResourceManager.h>
-#include <anki/resource/Model.h>
+#include <anki/resource/ModelResource.h>
 
 namespace anki
 {
@@ -45,7 +45,7 @@ Error StaticGeometryPatchNode::init(const ModelPatch* modelPatch)
 	m_modelPatch = modelPatch;
 
 	// Create spatial components
-	for(U i = 1; i < m_modelPatch->getSubMeshesCount(); i++)
+	for(U i = 1; i < m_modelPatch->getSubMeshCount(); i++)
 	{
 		SpatialComponent* spatial = newComponent<SpatialComponent>(this, &m_modelPatch->getBoundingShapeSub(i));
 

@@ -18,7 +18,7 @@ namespace anki
 
 // Forward
 class XmlElement;
-class Material;
+class MaterialResource;
 template<typename T>
 class MaterialVariableTemplate;
 class MaterialVariable;
@@ -46,7 +46,7 @@ enum class BuiltinMaterialVariableId : U8
 /// Holds the shader variables. Its a container for shader program variables that share the same name
 class MaterialVariable : public NonCopyable
 {
-	friend class Material;
+	friend class MaterialResource;
 	friend class MaterialVariant;
 
 public:
@@ -96,14 +96,14 @@ protected:
 };
 
 // Specialize the MaterialVariable::getValue
-#define ANKI_SPECIALIZE_GET_VALUE(t_, var_, shaderType_)                                          \
-	template<>                                                                                    \
-	inline const t_& MaterialVariable::getValue<t_>() const                                       \
-	{                                                                                             \
-		ANKI_ASSERT(m_input);                                                                     \
+#define ANKI_SPECIALIZE_GET_VALUE(t_, var_, shaderType_) \
+	template<> \
+	inline const t_& MaterialVariable::getValue<t_>() const \
+	{ \
+		ANKI_ASSERT(m_input); \
 		ANKI_ASSERT(m_input->getShaderVariableDataType() == ShaderVariableDataType::shaderType_); \
-		ANKI_ASSERT(m_builtin == BuiltinMaterialVariableId::NONE);                                \
-		return var_;                                                                              \
+		ANKI_ASSERT(m_builtin == BuiltinMaterialVariableId::NONE); \
+		return var_; \
 	}
 
 ANKI_SPECIALIZE_GET_VALUE(I32, m_int, INT)
@@ -126,7 +126,7 @@ inline const TextureResourcePtr& MaterialVariable::getValue() const
 {
 	ANKI_ASSERT(m_input);
 	ANKI_ASSERT(m_input->getShaderVariableDataType() >= ShaderVariableDataType::SAMPLERS_FIRST
-		&& m_input->getShaderVariableDataType() <= ShaderVariableDataType::SAMPLERS_LAST);
+				&& m_input->getShaderVariableDataType() <= ShaderVariableDataType::SAMPLERS_LAST);
 	ANKI_ASSERT(m_builtin == BuiltinMaterialVariableId::NONE);
 	return m_tex;
 }
@@ -136,7 +136,7 @@ inline const TextureResourcePtr& MaterialVariable::getValue() const
 /// Material variant.
 class MaterialVariant : public NonCopyable
 {
-	friend class Material;
+	friend class MaterialResource;
 	friend class MaterialVariable;
 
 public:
@@ -198,15 +198,15 @@ private:
 /// @endcode
 /// (1): For non-builtins.
 /// (2): For builtins.
-class Material : public ResourceObject
+class MaterialResource : public ResourceObject
 {
 	friend class MaterialVariable;
 	friend class MaterialVariant;
 
 public:
-	Material(ResourceManager* manager);
+	MaterialResource(ResourceManager* manager);
 
-	~Material();
+	~MaterialResource();
 
 	/// Load a material file
 	ANKI_USE_RESULT Error load(const ResourceFilename& filename, Bool async);

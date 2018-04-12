@@ -3,10 +3,10 @@
 // Code licensed under the BSD License.
 // http://www.anki3d.org/LICENSE
 
-#include <anki/resource/Model.h>
+#include <anki/resource/ModelResource.h>
 #include <anki/resource/ResourceManager.h>
-#include <anki/resource/Material.h>
-#include <anki/resource/Mesh.h>
+#include <anki/resource/MaterialResource.h>
+#include <anki/resource/MeshResource.h>
 #include <anki/resource/MeshLoader.h>
 #include <anki/misc/Xml.h>
 #include <anki/util/Logger.h>
@@ -14,7 +14,7 @@
 namespace anki
 {
 
-ModelPatch::ModelPatch(Model* model)
+ModelPatch::ModelPatch(ModelResource* model)
 	: m_model(model)
 {
 }
@@ -29,7 +29,7 @@ void ModelPatch::getRenderingDataSub(
 	// Get the resources
 	RenderingKey meshKey = key;
 	meshKey.m_lod = min<U>(key.m_lod, m_meshCount - 1);
-	const Mesh& mesh = getMesh(meshKey);
+	const MeshResource& mesh = getMesh(meshKey);
 
 	// Get program
 	{
@@ -41,81 +41,80 @@ void ModelPatch::getRenderingDataSub(
 		inf.m_program = variant.getShaderProgram();
 	}
 
-	// Vertex info
+	// Vertex attributes
+	U32 positionBinding = MAX_U32;
 	{
-		inf.m_vertexBufferBindingCount = 1;
-		VertexBufferBinding& vertBuffBinding = inf.m_vertexBufferBindings[0];
-		vertBuffBinding.m_buffer = mesh.getVertexBuffer();
-		vertBuffBinding.m_offset = 0;
-		vertBuffBinding.m_stride = mesh.getVertexSize();
-
-		auto& attribs = inf.m_vertexAttributes;
-
-		U relativeOffset = 0;
-
-		attribs[0].m_bufferBinding = 0;
-		attribs[0].m_format = PixelFormat(ComponentFormat::R32G32B32, TransformFormat::FLOAT);
-		attribs[0].m_relativeOffset = relativeOffset;
-		relativeOffset += sizeof(Vec3);
-
-		attribs[1].m_bufferBinding = 0;
-		attribs[1].m_format = PixelFormat(ComponentFormat::R16G16, TransformFormat::FLOAT);
-		attribs[1].m_relativeOffset = relativeOffset;
-		relativeOffset += sizeof(U16) * 2;
-
-		inf.m_vertexAttributeCount = 2;
-
 		if(key.m_pass == Pass::GB_FS)
 		{
-			attribs[2].m_bufferBinding = 0;
-			attribs[2].m_format = PixelFormat(ComponentFormat::R10G10B10A2, TransformFormat::SNORM);
-			attribs[2].m_relativeOffset = relativeOffset;
-			relativeOffset += sizeof(U32);
+			// All attributes
 
-			attribs[3].m_bufferBinding = 0;
-			attribs[3].m_format = PixelFormat(ComponentFormat::R10G10B10A2, TransformFormat::SNORM);
-			attribs[3].m_relativeOffset = relativeOffset;
-			relativeOffset += sizeof(U32);
+			inf.m_vertexAttributeCount = 0;
 
-			inf.m_vertexAttributeCount = 4;
+			for(VertexAttributeLocation loc = VertexAttributeLocation::FIRST; loc < VertexAttributeLocation::COUNT;
+				++loc)
+			{
+				if(!mesh.isVertexAttributePresent(loc))
+				{
+					continue;
+				}
+
+				VertexAttributeInfo& out = inf.m_vertexAttributes[inf.m_vertexAttributeCount++];
+
+				out.m_location = loc;
+				mesh.getVertexAttributeInfo(loc, out.m_bufferBinding, out.m_format, out.m_relativeOffset);
+			}
 		}
 		else
 		{
-			relativeOffset += sizeof(U32) * 2;
-		}
+			// Only position
 
-		if(mesh.hasBoneWeights())
+			inf.m_vertexAttributeCount = 1;
+
+			VertexAttributeInfo& out = inf.m_vertexAttributes[0];
+			out.m_location = VertexAttributeLocation::POSITION;
+
+			mesh.getVertexAttributeInfo(out.m_location, out.m_bufferBinding, out.m_format, out.m_relativeOffset);
+
+			// Rewrite the binding just so we can keep it in a low binding location
+			positionBinding = out.m_bufferBinding;
+			out.m_bufferBinding = 0;
+		}
+	}
+
+	// Vertex buffers
+	{
+		if(key.m_pass == Pass::GB_FS)
 		{
-			attribs[4].m_bufferBinding = 0;
-			attribs[4].m_format = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
-			attribs[4].m_relativeOffset = relativeOffset;
-			relativeOffset += sizeof(U8) * 4;
+			// All attributes
 
-			attribs[5].m_bufferBinding = 0;
-			attribs[5].m_format = PixelFormat(ComponentFormat::R16G16B16A16, TransformFormat::UINT);
-			attribs[5].m_relativeOffset = relativeOffset;
-			relativeOffset += sizeof(U16) * 4;
+			inf.m_vertexBufferBindingCount = mesh.getVertexBufferCount();
 
-			inf.m_vertexAttributeCount = 6;
+			for(U i = 0; i < inf.m_vertexBufferBindingCount; ++i)
+			{
+				VertexBufferBinding& out = inf.m_vertexBufferBindings[i];
+				mesh.getVertexBufferInfo(i, out.m_buffer, out.m_offset, out.m_stride);
+			}
 		}
+		else
+		{
+			// Only position
 
-		ANKI_ASSERT(relativeOffset == mesh.getVertexSize());
+			inf.m_vertexBufferBindingCount = 1;
+
+			VertexBufferBinding& out = inf.m_vertexBufferBindings[0];
+			mesh.getVertexBufferInfo(positionBinding, out.m_buffer, out.m_offset, out.m_stride);
+		}
 	}
 
 	// Index buff
-	inf.m_indexBuffer = mesh.getIndexBuffer();
+	U32 indexCount;
+	mesh.getIndexBufferInfo(inf.m_indexBuffer, inf.m_indexBufferOffset, indexCount, inf.m_indexType);
 
 	// Other
-	if(subMeshIndicesArray.getSize() == 0 || mesh.getSubMeshesCount() == 0)
-	{
-		inf.m_drawcallCount = 1;
-		inf.m_indicesOffsetArray[0] = 0;
-		inf.m_indicesCountArray[0] = mesh.getIndicesCount();
-	}
-	else
-	{
-		ANKI_ASSERT(!"TODO");
-	}
+	ANKI_ASSERT(subMeshIndicesArray.getSize() == 0 && mesh.getSubMeshCount() == 1 && "Not supported ATM");
+	inf.m_drawcallCount = 1;
+	inf.m_indicesOffsetArray[0] = 0;
+	inf.m_indicesCountArray[0] = indexCount;
 }
 
 U ModelPatch::getLodCount() const
@@ -123,7 +122,8 @@ U ModelPatch::getLodCount() const
 	return max<U>(m_meshCount, getMaterial()->getLodCount());
 }
 
-Error ModelPatch::create(WeakArray<CString> meshFNames, const CString& mtlFName, Bool async, ResourceManager* manager)
+Error ModelPatch::create(
+	ConstWeakArray<CString> meshFNames, const CString& mtlFName, Bool async, ResourceManager* manager)
 {
 	ANKI_ASSERT(meshFNames.getSize() > 0);
 
@@ -149,12 +149,12 @@ Error ModelPatch::create(WeakArray<CString> meshFNames, const CString& mtlFName,
 	return Error::NONE;
 }
 
-Model::Model(ResourceManager* manager)
+ModelResource::ModelResource(ResourceManager* manager)
 	: ResourceObject(manager)
 {
 }
 
-Model::~Model()
+ModelResource::~ModelResource()
 {
 	auto alloc = getAllocator();
 
@@ -166,7 +166,7 @@ Model::~Model()
 	m_modelPatches.destroy(alloc);
 }
 
-Error Model::load(const ResourceFilename& filename, Bool async)
+Error ModelResource::load(const ResourceFilename& filename, Bool async)
 {
 	auto alloc = getAllocator();
 
@@ -242,12 +242,7 @@ Error Model::load(const ResourceFilename& filename, Bool async)
 		ANKI_CHECK(materialEl.getText(cstr));
 		ModelPatch* mpatch = alloc.newInstance<ModelPatch>(this);
 
-		if(mpatch == nullptr)
-		{
-			return Error::OUT_OF_MEMORY;
-		}
-
-		ANKI_CHECK(mpatch->create(WeakArray<CString>(&meshesFnames[0], meshesCount), cstr, async, &getManager()));
+		ANKI_CHECK(mpatch->create(ConstWeakArray<CString>(&meshesFnames[0], meshesCount), cstr, async, &getManager()));
 
 		m_modelPatches[count++] = mpatch;
 

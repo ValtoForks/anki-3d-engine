@@ -109,10 +109,10 @@ void Canvas::endBuilding()
 #endif
 }
 
-void Canvas::pushFont(FontPtr font, U32 fontHeight)
+void Canvas::pushFont(const FontPtr& font, U32 fontHeight)
 {
 	ANKI_ASSERT(m_building);
-	m_references.pushBack(m_stackAlloc, IntrusivePtr<UiObject>(font.get()));
+	m_references.pushBack(m_stackAlloc, IntrusivePtr<UiObject>(const_cast<Font*>(font.get())));
 	nk_style_push_font(&m_nkCtx, &font->getFont(fontHeight));
 }
 
@@ -204,9 +204,9 @@ void Canvas::appendToCommandBuffer(CommandBufferPtr cmdb)
 
 	// Vert & idx buffers
 	cmdb->bindVertexBuffer(0, vertCtx.m_token.m_buffer, vertCtx.m_token.m_offset, sizeof(Vert));
-	cmdb->setVertexAttribute(0, 0, PixelFormat(ComponentFormat::R32G32, TransformFormat::FLOAT), 0);
-	cmdb->setVertexAttribute(1, 0, PixelFormat(ComponentFormat::R32G32, TransformFormat::FLOAT), sizeof(Vec2));
-	cmdb->setVertexAttribute(2, 0, PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM), sizeof(Vec2) * 2);
+	cmdb->setVertexAttribute(0, 0, Format::R32G32_SFLOAT, 0);
+	cmdb->setVertexAttribute(1, 0, Format::R32G32_SFLOAT, sizeof(Vec2));
+	cmdb->setVertexAttribute(2, 0, Format::R8G8B8A8_UNORM, sizeof(Vec2) * 2);
 
 	cmdb->bindIndexBuffer(idxCtx.m_token.m_buffer, idxCtx.m_token.m_offset, IndexType::U16);
 

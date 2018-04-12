@@ -12,36 +12,41 @@
 // Common uniforms between lights
 struct LightingUniforms
 {
-	vec4 projectionParams;
+	vec4 unprojectionParams;
 	vec4 rendererSizeTimeNear;
 	vec4 cameraPosFar;
 	ClustererMagicValues clustererMagicValues;
 	uvec4 tileCount;
+	mat4 viewMat;
 	mat4 invViewMat;
+	mat4 projMat;
+	mat4 invProjMat;
+	mat4 viewProjMat;
 	mat4 invViewProjMat;
 	mat4 prevViewProjMat;
-	mat4 invProjMat;
+	mat4 prevViewProjMatMulInvViewProjMat; // Used to re-project previous frames
 };
 
 // Point light
 struct PointLight
 {
-	vec4 posRadius; // xyz: Light pos in view space. w: The -1/(radius^2)
-	vec4 diffuseColorShadowmapId; // xyz: diff color, w: tile size in the shadow atlas
-	vec4 specularColorRadius; // xyz: spec color, w: radius
+	vec4 posRadius; // xyz: Light pos in world space. w: The 1/(radius^2)
+	vec4 diffuseColorTileSize; // xyz: diff color, w: tile size in the shadow atlas
+	vec4 radiusPad3; // x: radius
 	uvec4 atlasTilesPad2; // x: encodes 6 uints with atlas tile indices in the x dir. y: same for y dir.
 };
+const uint POINT_LIGHT_SIZEOF = (4 * 4) * 4;
 
 // Spot light
 struct SpotLight
 {
-	vec4 posRadius; // xyz: Light pos in view space. w: The -1/(radius^2)
+	vec4 posRadius; // xyz: Light pos in world space. w: The 1/(radius^2)
 	vec4 diffuseColorShadowmapId; // xyz: diff color, w: shadowmap tex ID
-	vec4 specularColorRadius; // xyz: spec color, w: radius
-	vec4 lightDir;
+	vec4 lightDirRadius; // xyz: light direction, w: radius
 	vec4 outerCosInnerCos;
 	mat4 texProjectionMat;
 };
+const uint SPOT_LIGHT_SIZEOF = (4 * 4 + 16) * 4;
 
 // Representation of a reflection probe
 struct ReflectionProbe
@@ -52,6 +57,7 @@ struct ReflectionProbe
 	// Slice in u_reflectionsTex vector.
 	vec4 cubemapIndexPad3;
 };
+const uint REFLECTION_PROBE_SIZEOF = (2 * 4) * 4;
 
 // Decal
 struct Decal
@@ -61,6 +67,7 @@ struct Decal
 	mat4 texProjectionMat;
 	vec4 blendFactors;
 };
+const uint DECAL_SIZEOF = (3 * 4 + 16) * 4;
 
 //
 // Common uniforms
@@ -69,24 +76,29 @@ struct Decal
 
 const uint _NEXT_UBO_BINDING = LIGHT_UBO_BINDING + 1;
 
-layout(ANKI_UBO_BINDING(LIGHT_SET, LIGHT_UBO_BINDING), std140, row_major) uniform u0_
+layout(ANKI_UBO_BINDING(LIGHT_SET, LIGHT_UBO_BINDING), std140, row_major) uniform lu0_
 {
 	LightingUniforms u_lightingUniforms;
 };
 
-#define u_near readFirstInvocationARB(u_lightingUniforms.rendererSizeTimeNear.w)
-#define u_far readFirstInvocationARB(u_lightingUniforms.cameraPosFar.w)
-#define u_clusterCountX readFirstInvocationARB(u_lightingUniforms.tileCount.x)
-#define u_clusterCountY readFirstInvocationARB(u_lightingUniforms.tileCount.y)
-#define u_clustererMagic u_lightingUniforms.clustererMagicValues
-#define u_time readFirstInvocationARB(u_lightingUniforms.rendererSizeTimeNear.z)
-#define u_unprojectionParams readFirstInvocationARB(u_lightingUniforms.projectionParams)
-#define u_invViewMat u_lightingUniforms.invViewMat
-#define u_invProjMat u_lightingUniforms.invProjMat
-#define u_invViewProjMat u_lightingUniforms.invViewProjMat
-#define u_prevViewProjMat u_lightingUniforms.prevViewProjMat
-#define u_cameraPos u_lightingUniforms.cameraPosFar.xyz
-#define u_rendererSize u_lightingUniforms.rendererSizeTimeNear.xy
+#	define u_near readFirstInvocationARB(u_lightingUniforms.rendererSizeTimeNear.w)
+#	define u_far readFirstInvocationARB(u_lightingUniforms.cameraPosFar.w)
+#	define u_cameraPos readFirstInvocationARB(u_lightingUniforms.cameraPosFar.xyz)
+#	define u_clusterCountX readFirstInvocationARB(u_lightingUniforms.tileCount.x)
+#	define u_clusterCountY readFirstInvocationARB(u_lightingUniforms.tileCount.y)
+#	define u_clustererMagic u_lightingUniforms.clustererMagicValues
+#	define u_time readFirstInvocationARB(u_lightingUniforms.rendererSizeTimeNear.z)
+#	define u_unprojectionParams readFirstInvocationARB(u_lightingUniforms.unprojectionParams)
+#	define u_rendererSize u_lightingUniforms.rendererSizeTimeNear.xy
+
+#	define u_viewMat u_lightingUniforms.viewMat
+#	define u_invViewMat u_lightingUniforms.invViewMat
+#	define u_projMat u_lightingUniforms.projMat
+#	define u_invProjMat u_lightingUniforms.invProjMat
+#	define u_viewProjMat u_lightingUniforms.viewProjMat
+#	define u_invViewProjMat u_lightingUniforms.invViewProjMat
+#	define u_prevViewProjMat u_lightingUniforms.prevViewProjMat
+#	define u_prevViewProjMatMulInvViewProjMat u_lightingUniforms.prevViewProjMatMulInvViewProjMat
 
 #else
 const uint _NEXT_UBO_BINDING = LIGHT_UBO_BINDING;
@@ -101,12 +113,12 @@ const uint _NEXT_TEX_BINDING_2 = LIGHT_TEX_BINDING + 1;
 
 layout(ANKI_UBO_BINDING(LIGHT_SET, _NEXT_UBO_BINDING), std140) uniform u1_
 {
-	PointLight u_pointLights[UBO_MAX_SIZE / (3 * 4 * 4)];
+	PointLight u_pointLights[UBO_MAX_SIZE / POINT_LIGHT_SIZEOF];
 };
 
 layout(ANKI_UBO_BINDING(LIGHT_SET, _NEXT_UBO_BINDING + 1), std140, row_major) uniform u2_
 {
-	SpotLight u_spotLights[UBO_MAX_SIZE / (9 * 4 * 4)];
+	SpotLight u_spotLights[UBO_MAX_SIZE / SPOT_LIGHT_SIZEOF];
 };
 
 layout(ANKI_TEX_BINDING(LIGHT_SET, LIGHT_TEX_BINDING + 0)) uniform highp sampler2D u_shadowTex;
@@ -124,7 +136,7 @@ const uint _NEXT_TEX_BINDING_3 = _NEXT_TEX_BINDING_2 + 3;
 
 layout(std140, row_major, ANKI_UBO_BINDING(LIGHT_SET, _NEXT_UBO_BINDING_2)) uniform u3_
 {
-	ReflectionProbe u_reflectionProbes[UBO_MAX_SIZE / (2 * 4 * 4)];
+	ReflectionProbe u_reflectionProbes[UBO_MAX_SIZE / REFLECTION_PROBE_SIZEOF];
 };
 
 layout(ANKI_TEX_BINDING(LIGHT_SET, _NEXT_TEX_BINDING_2 + 0)) uniform samplerCubeArray u_reflectionsTex;
@@ -141,11 +153,11 @@ const uint _NEXT_TEX_BINDING_3 = _NEXT_TEX_BINDING_2;
 #if defined(LIGHT_DECALS)
 layout(std140, row_major, ANKI_UBO_BINDING(LIGHT_SET, _NEXT_UBO_BINDING_3)) uniform u4_
 {
-	Decal u_decals[UBO_MAX_SIZE / ((4 + 16) * 4)];
+	Decal u_decals[UBO_MAX_SIZE / DECAL_SIZEOF];
 };
 
 layout(ANKI_TEX_BINDING(LIGHT_SET, _NEXT_TEX_BINDING_3 + 0)) uniform sampler2D u_diffDecalTex;
-layout(ANKI_TEX_BINDING(LIGHT_SET, _NEXT_TEX_BINDING_3 + 1)) uniform sampler2D u_normalRoughnessDecalTex;
+layout(ANKI_TEX_BINDING(LIGHT_SET, _NEXT_TEX_BINDING_3 + 1)) uniform sampler2D u_specularRoughnessDecalTex;
 #endif
 
 //

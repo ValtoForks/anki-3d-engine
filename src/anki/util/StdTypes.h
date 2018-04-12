@@ -76,6 +76,9 @@ using Bool32 = I32; ///< A 32bit boolean
 
 using Second = F64; ///< The base time unit is second.
 
+using Timestamp = U64; ///< Timestamp type.
+const Timestamp MAX_TIMESTAMP = MAX_U64;
+
 /// Representation of error and a wrapper on top of error codes.
 class Error
 {
@@ -156,31 +159,31 @@ private:
 };
 
 /// Macro to check if a method/function returned an error.
-#define ANKI_CHECK(x_)           \
-	do                           \
-	{                            \
-		Error error = x_;        \
+#define ANKI_CHECK(x_) \
+	do \
+	{ \
+		Error error = x_; \
 		if(ANKI_UNLIKELY(error)) \
-		{                        \
-			return error;        \
-		}                        \
+		{ \
+			return error; \
+		} \
 	} while(0)
 
 /// Macro the check if a memory allocation is OOM.
-#define ANKI_CHECK_OOM(x_)               \
-	do                                   \
-	{                                    \
+#define ANKI_CHECK_OOM(x_) \
+	do \
+	{ \
 		if(ANKI_UNLIKELY(x_ == nullptr)) \
-		{                                \
+		{ \
 			return Error::OUT_OF_MEMORY; \
-		}                                \
+		} \
 	} while(0)
 
 /// Macro to nuliffy a pointer on debug builds.
 #if ANKI_EXTRA_CHECKS
-#define ANKI_DBG_NULLIFY = {}
+#	define ANKI_DBG_NULLIFY = {}
 #else
-#define ANKI_DBG_NULLIFY
+#	define ANKI_DBG_NULLIFY
 #endif
 
 /// @name Size user literals
@@ -197,7 +200,12 @@ static constexpr unsigned long long int operator""_KB(unsigned long long int x)
 
 static constexpr unsigned long long int operator""_MB(unsigned long long int x)
 {
-	return x * 1024 * 1024;
+	return x * (1024 * 1024);
+}
+
+static constexpr unsigned long long int operator""_GB(unsigned long long int x)
+{
+	return x * (1024 * 1024 * 1024);
 }
 /// @}
 
@@ -215,8 +223,8 @@ static constexpr long double operator""_ns(long double x)
 /// @}
 
 /// Convenience macro that defines the type of a class.
-#define ANKI_DEFINE_CLASS_SELF                  \
-	typedef auto _selfFn()->decltype(*this);    \
+#define ANKI_DEFINE_CLASS_SELF \
+	typedef auto _selfFn()->decltype(*this); \
 	using _SelfRef = decltype(((_selfFn*)0)()); \
 	using Self = std::remove_reference<_SelfRef>::type;
 /// @}

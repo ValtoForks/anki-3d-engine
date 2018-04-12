@@ -6,7 +6,6 @@
 #pragma once
 
 #include <anki/scene/Common.h>
-#include <anki/core/Timestamp.h>
 #include <anki/util/Functions.h>
 #include <anki/util/BitMask.h>
 #include <anki/util/List.h>
@@ -35,6 +34,7 @@ enum class SceneComponentType : U16
 	OCCLUDER,
 	DECAL,
 	SKIN,
+	SCRIPT,
 	PLAYER_CONTROLLER,
 
 	COUNT,

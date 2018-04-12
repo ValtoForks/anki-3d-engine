@@ -25,7 +25,7 @@ namespace anki
 
 CommandBuffer* CommandBuffer::newInstance(GrManager* manager, const CommandBufferInitInfo& inf)
 {
-	CommandBufferImpl* impl = manager->getAllocator().newInstance<CommandBufferImpl>(manager);
+	CommandBufferImpl* impl = manager->getAllocator().newInstance<CommandBufferImpl>(manager, inf.getName());
 	impl->init(inf);
 	return impl;
 }
@@ -90,7 +90,7 @@ void CommandBuffer::bindVertexBuffer(
 	}
 }
 
-void CommandBuffer::setVertexAttribute(U32 location, U32 buffBinding, const PixelFormat& fmt, PtrSize relativeOffset)
+void CommandBuffer::setVertexAttribute(U32 location, U32 buffBinding, Format fmt, PtrSize relativeOffset)
 {
 	class Cmd final : public GlCommand
 	{
@@ -762,8 +762,7 @@ void CommandBuffer::bindImage(U32 set, U32 binding, TextureViewPtr img)
 	}
 }
 
-void CommandBuffer::bindTextureBuffer(
-	U32 set, U32 binding, BufferPtr buff, PtrSize offset, PtrSize range, PixelFormat fmt)
+void CommandBuffer::bindTextureBuffer(U32 set, U32 binding, BufferPtr buff, PtrSize offset, PtrSize range, Format fmt)
 {
 	class Cmd final : public GlCommand
 	{
@@ -823,8 +822,9 @@ void CommandBuffer::bindShaderProgram(ShaderProgramPtr prog)
 		{
 		}
 
-		Error operator()(GlState&)
+		Error operator()(GlState& state)
 		{
+			state.m_crntProg = m_prog;
 			glUseProgram(static_cast<const ShaderProgramImpl&>(*m_prog).getGlName());
 			return Error::NONE;
 		}
@@ -1485,6 +1485,72 @@ void CommandBuffer::writeOcclusionQueryResultToBuffer(OcclusionQueryPtr query, P
 	ANKI_GL_SELF(CommandBufferImpl);
 	ANKI_ASSERT(!self.m_state.insideRenderPass());
 	self.pushBackNewCommand<WriteOcclResultToBuff>(query, offset, buff);
+}
+
+void CommandBuffer::setPushConstants(const void* data, U32 dataSize)
+{
+	class PushConstants final : public GlCommand
+	{
+	public:
+		DynamicArrayAuto<Vec4> m_data;
+
+		PushConstants(const void* data, U32 dataSize, const CommandBufferAllocator<F32>& alloc)
+			: m_data(alloc)
+		{
+			m_data.create(dataSize / sizeof(Vec4));
+			memcpy(&m_data[0], data, dataSize);
+		}
+
+		Error operator()(GlState& state)
+		{
+			const ShaderProgramImplReflection& refl =
+				static_cast<ShaderProgramImpl&>(*state.m_crntProg).getReflection();
+			ANKI_ASSERT(refl.m_uniformDataSize == m_data.getSizeInBytes());
+
+			for(const ShaderProgramImplReflection::Uniform& uni : refl.m_uniforms)
+			{
+				const U8* data = reinterpret_cast<const U8*>(&m_data[0]) + uni.m_pushConstantOffset;
+				const U count = uni.m_arrSize;
+				const GLint loc = uni.m_location;
+
+				switch(uni.m_type)
+				{
+				case ShaderVariableDataType::VEC4:
+					glUniform4fv(loc, count, reinterpret_cast<const GLfloat*>(data));
+					break;
+				case ShaderVariableDataType::IVEC4:
+					glUniform4iv(loc, count, reinterpret_cast<const GLint*>(data));
+					break;
+				case ShaderVariableDataType::UVEC4:
+					glUniform4uiv(loc, count, reinterpret_cast<const GLuint*>(data));
+					break;
+				case ShaderVariableDataType::MAT4:
+					glUniformMatrix4fv(loc, count, false, reinterpret_cast<const GLfloat*>(data));
+					break;
+				case ShaderVariableDataType::MAT3:
+				{
+					// Remove the padding
+					ANKI_ASSERT(count == 1 && "TODO");
+					const Mat3x4* m34 = reinterpret_cast<const Mat3x4*>(data);
+					Mat3 m3(m34->getRotationPart());
+					glUniformMatrix3fv(loc, count, false, reinterpret_cast<const GLfloat*>(&m3));
+					break;
+				}
+				default:
+					ANKI_ASSERT(!"TODO");
+				}
+			}
+
+			return Error::NONE;
+		}
+	};
+
+	ANKI_ASSERT(data);
+	ANKI_ASSERT(dataSize);
+	ANKI_ASSERT(dataSize % 16 == 0);
+
+	ANKI_GL_SELF(CommandBufferImpl);
+	self.pushBackNewCommand<PushConstants>(data, dataSize, self.m_alloc);
 }
 
 } // end namespace anki

@@ -204,9 +204,7 @@ Error GrManagerImpl::initInternal(const GrManagerInitInfo& init)
 	m_descrFactory.init(getAllocator(), m_device);
 	m_pplineLayoutFactory.init(getAllocator(), m_device);
 
-	m_capabilities |= !!(m_extensions & VulkanExtensions::EXT_SHADER_SUBGROUP_BALLOT)
-		? GpuDeviceCapabilitiesBit::SHADER_BALLOT
-		: GpuDeviceCapabilitiesBit::NONE;
+	m_capabilities.m_shaderSubgroups = !!(m_extensions & VulkanExtensions::EXT_SHADER_SUBGROUP_BALLOT);
 
 	return Error::NONE;
 }
@@ -309,7 +307,7 @@ Error GrManagerImpl::initInstance(const GrManagerInitInfo& init)
 				instExtensions[instExtensionCount++] = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
 			}
 #else
-#error TODO
+#	error TODO
 #endif
 			else if(CString(instExtensionInf[i].extensionName) == VK_KHR_SURFACE_EXTENSION_NAME)
 			{
@@ -358,7 +356,7 @@ Error GrManagerImpl::initInstance(const GrManagerInitInfo& init)
 		ci.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT;
 		ci.pfnCallback = debugReportCallbackEXT;
 		ci.flags = VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT
-			| VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT;
+				   | VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT;
 		ci.pUserData = this;
 
 		PFN_vkCreateDebugReportCallbackEXT vkCreateDebugReportCallbackEXT =
@@ -389,24 +387,32 @@ Error GrManagerImpl::initInstance(const GrManagerInitInfo& init)
 	switch(m_devProps.vendorID)
 	{
 	case 0x13B5:
-		m_gpuVendor = GpuVendor::ARM;
+		m_capabilities.m_gpuVendor = GpuVendor::ARM;
 		break;
 	case 0x10DE:
-		m_gpuVendor = GpuVendor::NVIDIA;
+		m_capabilities.m_gpuVendor = GpuVendor::NVIDIA;
 		break;
 	case 0x1002:
 	case 0x1022:
-		m_gpuVendor = GpuVendor::AMD;
+		m_capabilities.m_gpuVendor = GpuVendor::AMD;
 		break;
 	case 0x8086:
-		m_gpuVendor = GpuVendor::INTEL;
+		m_capabilities.m_gpuVendor = GpuVendor::INTEL;
 		break;
 	default:
-		m_gpuVendor = GpuVendor::UNKNOWN;
+		m_capabilities.m_gpuVendor = GpuVendor::UNKNOWN;
 	}
-	ANKI_VK_LOGI("GPU vendor is %s", &GPU_VENDOR_STR[m_gpuVendor][0]);
+	ANKI_VK_LOGI("GPU vendor is %s", &GPU_VENDOR_STR[m_capabilities.m_gpuVendor][0]);
 
 	vkGetPhysicalDeviceFeatures(m_physicalDevice, &m_devFeatures);
+
+	// Set limits
+	m_capabilities.m_uniformBufferBindOffsetAlignment = m_devProps.limits.minUniformBufferOffsetAlignment;
+	m_capabilities.m_uniformBufferMaxRange = m_devProps.limits.maxUniformBufferRange;
+	m_capabilities.m_storageBufferBindOffsetAlignment = m_devProps.limits.minStorageBufferOffsetAlignment;
+	m_capabilities.m_storageBufferMaxRange = m_devProps.limits.maxStorageBufferRange;
+	m_capabilities.m_textureBufferBindOffsetAlignment = m_devProps.limits.minTexelBufferOffsetAlignment;
+	m_capabilities.m_textureBufferMaxRange = MAX_U32;
 
 	return Error::NONE;
 }
@@ -492,13 +498,13 @@ Error GrManagerImpl::initDevice(const GrManagerInitInfo& init)
 				extensionsToEnable[extensionsToEnableCount++] = VK_KHR_MAINTENANCE1_EXTENSION_NAME;
 			}
 			else if(CString(&extensionInfos[extCount].extensionName[0])
-				== VK_AMD_NEGATIVE_VIEWPORT_HEIGHT_EXTENSION_NAME)
+					== VK_AMD_NEGATIVE_VIEWPORT_HEIGHT_EXTENSION_NAME)
 			{
 				m_extensions |= VulkanExtensions::AMD_NEGATIVE_VIEWPORT_HEIGHT;
 				// Don't add it just yet. Can't enable it at the same time with VK_KHR_maintenance1
 			}
 			else if(CString(extensionInfos[extCount].extensionName) == VK_EXT_DEBUG_MARKER_EXTENSION_NAME
-				&& init.m_config->getNumber("window.debugMarkers"))
+					&& init.m_config->getNumber("window.debugMarkers"))
 			{
 				m_extensions |= VulkanExtensions::EXT_DEBUG_MARKER;
 				extensionsToEnable[extensionsToEnableCount++] = VK_EXT_DEBUG_MARKER_EXTENSION_NAME;
@@ -722,7 +728,7 @@ void GrManagerImpl::flushCommandBuffer(CommandBufferPtr cmdb, FencePtr* outFence
 	// Create fence
 	if(outFence)
 	{
-		outFence->reset(getAllocator().newInstance<FenceImpl>(this));
+		outFence->reset(getAllocator().newInstance<FenceImpl>(this, "Flush"));
 		static_cast<FenceImpl&>(**outFence).m_fence = fence;
 	}
 

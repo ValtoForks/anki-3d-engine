@@ -3,8 +3,15 @@
 // Code licensed under the BSD License.
 // http://www.anki3d.org/LICENSE
 
-#include <anki/resource/DummyRsrc.h>
+#include <anki/script/ScriptObject.h>
+#include <anki/script/ScriptManager.h>
 
 namespace anki
 {
-} // end namespace
+
+ScriptAllocator ScriptObject::getAllocator() const
+{
+	return m_manager->getAllocator();
+}
+
+} // end namespace anki

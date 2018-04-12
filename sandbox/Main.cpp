@@ -65,8 +65,8 @@ Error MyApp::init(int argc, char* argv[])
 	ANKI_CHECK(resources.loadResource(argv[2], script));
 	ANKI_CHECK(getScriptManager().evalString(script->getSource()));
 
-// ANKI_CHECK(renderer.getOffscreenRenderer().getFinalComposite().loadColorGradingTexture(
-//	"textures/color_gradient_luts/forge_lut.ankitex"));
+	// ANKI_CHECK(renderer.getOffscreenRenderer().getFinalComposite().loadColorGradingTexture(
+	//	"textures/color_gradient_luts/forge_lut.ankitex"));
 
 #if PLAYER
 	SceneGraph& scene = getSceneGraph();
@@ -125,7 +125,24 @@ Error MyApp::userMainLoop(Bool& quit)
 
 	if(in.getKey(KeyCode::F1) == 1)
 	{
-		renderer.getDbg().setEnabled(!renderer.getDbg().getEnabled());
+		static U mode = 0;
+		mode = (mode + 1) % 3;
+		if(mode == 0)
+		{
+			renderer.getDbg().setEnabled(false);
+		}
+		else if(mode == 1)
+		{
+			renderer.getDbg().setEnabled(true);
+			renderer.getDbg().setDepthTestEnabled(true);
+			renderer.getDbg().setDitheredDepthTestEnabled(false);
+		}
+		else
+		{
+			renderer.getDbg().setEnabled(true);
+			renderer.getDbg().setDepthTestEnabled(false);
+			renderer.getDbg().setDitheredDepthTestEnabled(true);
+		}
 	}
 	if(in.getKey(KeyCode::F2) == 1)
 	{

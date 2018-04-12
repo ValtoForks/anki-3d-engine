@@ -6,7 +6,7 @@
 #include <anki/scene/ParticleEmitterNode.h>
 #include <anki/scene/SceneGraph.h>
 #include <anki/scene/Misc.h>
-#include <anki/resource/Model.h>
+#include <anki/resource/ModelResource.h>
 #include <anki/resource/ResourceManager.h>
 #include <anki/util/Functions.h>
 #include <anki/physics/PhysicsWorld.h>
@@ -283,20 +283,24 @@ void ParticleEmitterNode::drawCallback(RenderQueueDrawContext& ctx, ConstWeakArr
 
 	if(!ctx.m_debugDraw)
 	{
+		// Load verts
+		StagingGpuMemoryToken token;
+		void* gpuStorage = ctx.m_stagingGpuAllocator->allocateFrame(
+			self.m_aliveParticlesCount * VERTEX_SIZE, StagingGpuMemoryType::VERTEX, token);
+		memcpy(gpuStorage, self.m_verts, self.m_aliveParticlesCount * VERTEX_SIZE);
+
 		// Program
 		ShaderProgramPtr prog;
 		self.m_particleEmitterResource->getRenderingInfo(ctx.m_key.m_lod, prog);
 		cmdb->bindShaderProgram(prog);
 
 		// Vertex attribs
-		cmdb->setVertexAttribute(0, 0, PixelFormat(ComponentFormat::R32G32B32, TransformFormat::FLOAT), 0);
-		cmdb->setVertexAttribute(1, 0, PixelFormat(ComponentFormat::R32, TransformFormat::FLOAT), sizeof(Vec3));
-		cmdb->setVertexAttribute(
-			2, 0, PixelFormat(ComponentFormat::R32, TransformFormat::FLOAT), sizeof(Vec3) + sizeof(F32));
+		cmdb->setVertexAttribute(0, 0, Format::R32G32B32_SFLOAT, 0);
+		cmdb->setVertexAttribute(1, 0, Format::R32_SFLOAT, sizeof(Vec3));
+		cmdb->setVertexAttribute(2, 0, Format::R32_SFLOAT, sizeof(Vec3) + sizeof(F32));
 
 		// Vertex buff
-		cmdb->bindVertexBuffer(
-			0, self.m_vertBuffToken.m_buffer, self.m_vertBuffToken.m_offset, VERTEX_SIZE, VertexStepRate::INSTANCE);
+		cmdb->bindVertexBuffer(0, token.m_buffer, token.m_offset, VERTEX_SIZE, VertexStepRate::INSTANCE);
 
 		// Uniforms
 		Array<Mat4, 1> trf = {{Mat4::getIdentity()}};
@@ -377,8 +381,8 @@ Error ParticleEmitterNode::frameUpdate(Second prevUpdateTime, Second crntTime)
 	Vec4 aabbmax(MIN_F32, MIN_F32, MIN_F32, 0.0f);
 	m_aliveParticlesCount = 0;
 
-	F32* verts = static_cast<F32*>(getSceneGraph().getStagingGpuMemoryManager().allocateFrame(
-		m_vertBuffSize, StagingGpuMemoryType::VERTEX, m_vertBuffToken));
+	F32* verts = reinterpret_cast<F32*>(getFrameAllocator().allocate(m_vertBuffSize));
+	m_verts = verts;
 
 	const F32* verts_base = verts;
 	(void)verts_base;
@@ -442,11 +446,12 @@ Error ParticleEmitterNode::frameUpdate(Second prevUpdateTime, Second crntTime)
 		Vec4 max = aabbmax + m_particle.m_size;
 		Vec4 center = (min + max) / 2.0;
 
-		m_obb = Obb(center, Mat3x4::getIdentity(), max - center);
+		m_obb = Obb(center.xyz0(), Mat3x4::getIdentity(), (max - center).xyz0());
 	}
 	else
 	{
-		m_obb = Obb(Vec4(0.0), Mat3x4::getIdentity(), Vec4(0.001));
+		m_obb = Obb(Vec4(0.0), Mat3x4::getIdentity(), Vec4(Vec3(0.001f), 0.0f));
+		m_verts = nullptr;
 	}
 
 	getComponent<SpatialComponent>().markForUpdate();

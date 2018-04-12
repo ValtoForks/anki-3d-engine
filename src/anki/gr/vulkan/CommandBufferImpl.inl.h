@@ -193,7 +193,7 @@ inline void CommandBufferImpl::setTextureVolumeBarrier(
 	if(vol.m_level > 0)
 	{
 		ANKI_ASSERT(!(nextUsage & TextureUsageBit::GENERATE_MIPMAPS)
-			&& "This transition happens inside CommandBufferImpl::generateMipmaps");
+					&& "This transition happens inside CommandBufferImpl::generateMipmaps");
 	}
 
 	const TextureImpl& impl = static_cast<const TextureImpl&>(*tex);
@@ -306,6 +306,9 @@ inline void CommandBufferImpl::dispatchCompute(U32 groupCountX, U32 groupCountY,
 {
 	ANKI_ASSERT(m_computeProg);
 	ANKI_ASSERT(!!(m_flags & CommandBufferFlag::COMPUTE_WORK));
+	ANKI_ASSERT(m_computeProg->getReflectionInfo().m_pushConstantsSize == m_setPushConstantsSize
+				&& "Forgot to set pushConstants");
+
 	commandCommon();
 
 	// Bind descriptors
@@ -428,7 +431,7 @@ inline void CommandBufferImpl::pushSecondLevelCommandBuffer(CommandBufferPtr cmd
 	commandCommon();
 	ANKI_ASSERT(insideRenderPass());
 	ANKI_ASSERT(m_subpassContents == VK_SUBPASS_CONTENTS_MAX_ENUM
-		|| m_subpassContents == VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
+				|| m_subpassContents == VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS);
 
 	ANKI_ASSERT(static_cast<const CommandBufferImpl&>(*cmdb).m_finalized);
 
@@ -463,6 +466,9 @@ inline void CommandBufferImpl::drawcallCommon()
 	commandCommon();
 	ANKI_ASSERT(insideRenderPass() || secondLevel());
 	ANKI_ASSERT(m_subpassContents == VK_SUBPASS_CONTENTS_MAX_ENUM || m_subpassContents == VK_SUBPASS_CONTENTS_INLINE);
+	ANKI_ASSERT(m_graphicsProg->getReflectionInfo().m_pushConstantsSize == m_setPushConstantsSize
+				&& "Forgot to set pushConstants");
+
 	m_subpassContents = VK_SUBPASS_CONTENTS_INLINE;
 
 	if(ANKI_UNLIKELY(m_rpCommandCount == 0) && !secondLevel())
@@ -575,7 +581,7 @@ inline void CommandBufferImpl::commandCommon()
 	}
 
 	ANKI_ASSERT(Thread::getCurrentThreadId() == m_tid
-		&& "Commands must be recorder and flushed by the thread this command buffer was created");
+				&& "Commands must be recorder and flushed by the thread this command buffer was created");
 
 	ANKI_ASSERT(m_handle);
 }
@@ -620,8 +626,9 @@ inline void CommandBufferImpl::fillBuffer(BufferPtr buff, PtrSize offset, PtrSiz
 	ANKI_ASSERT(offset < impl.getSize());
 	ANKI_ASSERT((offset % 4) == 0 && "Should be multiple of 4");
 
-	size = (size == MAX_PTR_SIZE) ? (impl.getSize() - offset) : size;
-	ANKI_ASSERT(offset + size <= impl.getSize());
+	size = (size == MAX_PTR_SIZE) ? (impl.getActualSize() - offset) : size;
+	alignRoundUp(4, size); // Needs to be multiple of 4
+	ANKI_ASSERT(offset + size <= impl.getActualSize());
 	ANKI_ASSERT((size % 4) == 0 && "Should be multiple of 4");
 
 	ANKI_CMD(vkCmdFillBuffer(m_handle, impl.getHandle(), offset, size, value), ANY_OTHER_COMMAND);
@@ -704,6 +711,10 @@ inline void CommandBufferImpl::bindShaderProgram(ShaderProgramPtr& prog)
 	}
 
 	m_microCmdb->pushObjectRef(prog);
+
+#if ANKI_EXTRA_CHECKS
+	m_setPushConstantsSize = 0;
+#endif
 }
 
 inline void CommandBufferImpl::copyBufferToBuffer(
@@ -730,7 +741,24 @@ inline void CommandBufferImpl::copyBufferToBuffer(
 inline Bool CommandBufferImpl::flipViewport() const
 {
 	return static_cast<const FramebufferImpl&>(*m_activeFb).isDefaultFramebuffer()
-		&& !!(getGrManagerImpl().getExtensions() & VulkanExtensions::KHR_MAINENANCE1);
+		   && !!(getGrManagerImpl().getExtensions() & VulkanExtensions::KHR_MAINENANCE1);
+}
+
+inline void CommandBufferImpl::setPushConstants(const void* data, U32 dataSize)
+{
+	ANKI_ASSERT(data && dataSize && dataSize % 16 == 0);
+	const ShaderProgramImpl* prog = (m_graphicsProg) ? m_graphicsProg : m_computeProg;
+	ANKI_ASSERT(prog && "Need have bound the ShaderProgram first");
+	ANKI_ASSERT(prog->getReflectionInfo().m_pushConstantsSize == dataSize
+				&& "The bound program should have push constants equal to the \"dataSize\" parameter");
+
+	ANKI_CMD(
+		vkCmdPushConstants(m_handle, prog->getPipelineLayout().getHandle(), VK_SHADER_STAGE_ALL, 0, dataSize, data),
+		ANY_OTHER_COMMAND);
+
+#if ANKI_EXTRA_CHECKS
+	m_setPushConstantsSize = dataSize;
+#endif
 }
 
 } // end namespace anki

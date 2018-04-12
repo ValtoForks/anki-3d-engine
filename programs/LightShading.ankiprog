@@ -46,19 +46,16 @@ void main()
 #define LIGHT_SET 0
 #define LIGHT_SS_BINDING 0
 #define LIGHT_UBO_BINDING 0
-#define LIGHT_TEX_BINDING 0
+#define LIGHT_TEX_BINDING 5
 #define LIGHT_LIGHTS
-#define LIGHT_INDIRECT
-#define LIGHT_DECALS
 #define LIGHT_COMMON_UNIS
 #include "shaders/ClusterLightCommon.glsl"
 
-layout(ANKI_TEX_BINDING(1, 0)) uniform sampler2D u_msRt0;
-layout(ANKI_TEX_BINDING(1, 1)) uniform sampler2D u_msRt1;
-layout(ANKI_TEX_BINDING(1, 2)) uniform sampler2D u_msRt2;
-layout(ANKI_TEX_BINDING(1, 3)) uniform sampler2D u_msDepthRt;
-
-layout(ANKI_TEX_BINDING(1, 4)) uniform sampler2D u_ssaoTex;
+layout(ANKI_TEX_BINDING(0, 0)) uniform sampler2D u_msRt0;
+layout(ANKI_TEX_BINDING(0, 1)) uniform sampler2D u_msRt1;
+layout(ANKI_TEX_BINDING(0, 2)) uniform sampler2D u_msRt2;
+layout(ANKI_TEX_BINDING(0, 3)) uniform sampler2D u_msDepthRt;
+layout(ANKI_TEX_BINDING(0, 4)) uniform sampler2D u_indirectRt;
 
 layout(location = 0) in vec2 in_uv;
 layout(location = 1) in vec2 in_clusterIJ;
@@ -71,80 +68,14 @@ const float SUBSURFACE_MIN = 0.05;
 #define LIGHTING_COMMON_BRDF() \
 	vec3 frag2Light = light.posRadius.xyz - worldPos; \
 	vec3 l = normalize(frag2Light); \
-	float nol = max(0.0, dot(normal, l)); \
-	vec3 specC = computeSpecularColorBrdf(viewDir, l, normal, specCol, light.specularColorRadius.rgb, a2, nol); \
-	vec3 diffC = computeDiffuseColor(diffCol, light.diffuseColorShadowmapId.rgb); \
+	vec3 specC = computeSpecularColorBrdf(gbuffer, viewDir, l); \
+	vec3 diffC = diffuseLambert(gbuffer.diffuse); \
 	float att = computeAttenuationFactor(light.posRadius.w, frag2Light); \
-	float lambert = nol;
-
-void debugIncorrectColor(inout vec3 c)
-{
-	if(isnan(c.x) || isnan(c.y) || isnan(c.z) || isinf(c.x) || isinf(c.y) || isinf(c.z))
-	{
-		c = vec3(1.0, 0.0, 1.0);
-	}
-}
-
-// Compute the colors of a decal.
-void appendDecalColors(in Decal decal, in vec3 worldPos, inout vec3 diffuseColor, inout float roughness)
-{
-	vec4 texCoords4 = decal.texProjectionMat * vec4(worldPos, 1.0);
-	vec2 texCoords2 = texCoords4.xy / texCoords4.w;
-
-	// Clamp the tex coords. Expect a border in the texture atlas
-	texCoords2 = saturate(texCoords2);
-
-	vec2 diffUv = mad(texCoords2, decal.diffUv.zw, decal.diffUv.xy);
-	vec4 dcol = texture(u_diffDecalTex, diffUv);
-	diffuseColor = mix(diffuseColor, dcol.rgb, dcol.a * decal.blendFactors[0]);
-
-	// Roughness
-	vec2 roughnessUv = mad(texCoords2, decal.normRoughnessUv.zw, decal.normRoughnessUv.xy);
-	float r = texture(u_normalRoughnessDecalTex, roughnessUv).w;
-	roughness = mix(roughness, r, dcol.a * decal.blendFactors[1]);
-}
-
-void readIndirect(uint idxOffset, vec3 pos, vec3 r, vec3 n, float lod, out vec3 specIndirect, out vec3 diffIndirect)
-{
-	specIndirect = vec3(0.0);
-	diffIndirect = vec3(0.0);
-
-	// Check proxy
-	uint count = u_lightIndices[idxOffset++];
-	while(count-- != 0)
-	{
-		ReflectionProbe probe = u_reflectionProbes[u_lightIndices[idxOffset++]];
-
-		float R2 = probe.positionRadiusSq.w;
-		vec3 center = probe.positionRadiusSq.xyz;
-
-		// Get distance from the center of the probe
-		vec3 f = pos - center;
-
-		// Cubemap UV in view space
-		vec3 uv = computeCubemapVecAccurate(r, R2, f);
-
-		// Read!
-		float cubemapIndex = probe.cubemapIndexPad3.x;
-		vec3 c = textureLod(u_reflectionsTex, vec4(uv, cubemapIndex), lod).rgb;
-
-		// Combine (lerp) with previous color
-		float d = dot(f, f);
-		float factor = d / R2;
-		factor = min(factor, 1.0);
-		specIndirect = mix(c, specIndirect, factor);
-		// Same as: specIndirect = c * (1.0 - factor) + specIndirect * factor
-
-		// Do the same for diffuse
-		uv = computeCubemapVecAccurate(n, R2, f);
-		vec3 id = textureLod(u_irradianceTex, vec4(uv, cubemapIndex), 0.0).rgb;
-		diffIndirect = mix(id, diffIndirect, factor);
-	}
-}
+	float lambert = max(0.0, dot(gbuffer.normal, l));
 
 void main()
 {
-	float depth = texture(u_msDepthRt, in_uv, 0.0).r;
+	float depth = textureLod(u_msDepthRt, in_uv, 0.0).r;
 	vec2 ndc = UV_TO_NDC(in_uv);
 
 	// Get world position
@@ -152,23 +83,9 @@ void main()
 	vec3 worldPos = worldPos4.xyz / worldPos4.w;
 
 	// Decode GBuffer
-	vec3 normal;
-	vec3 diffCol;
-	vec3 specCol;
-	float roughness;
-	float subsurface;
-	float emission;
-	float metallic;
-
 	GbufferInfo gbuffer;
 	readGBuffer(u_msRt0, u_msRt1, u_msRt2, in_uv, 0.0, gbuffer);
-	diffCol = gbuffer.diffuse;
-	specCol = gbuffer.specular;
-	normal = gbuffer.normal;
-	roughness = gbuffer.roughness;
-	metallic = gbuffer.metallic;
-	subsurface = max(gbuffer.subsurface, SUBSURFACE_MIN);
-	emission = gbuffer.emission;
+	gbuffer.subsurface = max(gbuffer.subsurface, SUBSURFACE_MIN);
 
 	// Get first light index
 	uint idxOffset;
@@ -180,25 +97,12 @@ void main()
 		idxOffset = u_clusters[clusterIdx];
 	}
 
-	// Decals
+	// Skip decals
 	uint count = u_lightIndices[idxOffset++];
-	while(count-- != 0)
-	{
-		Decal decal = u_decals[u_lightIndices[idxOffset++]];
-
-		appendDecalColors(decal, worldPos, diffCol, roughness);
-	}
-
-	// Apply SSAO
-	float ssao = texture(u_ssaoTex, in_uv).r;
-	diffCol *= ssao;
+	idxOffset += count;
 
 	// Ambient and emissive color
-	vec3 outC = diffCol * emission;
-
-	// Don't allow zero a2 because we may end up with division with zero
-	float a2 = roughness * 0.95 + 0.05;
-	a2 *= a2 * a2;
+	vec3 outC = gbuffer.diffuse * gbuffer.emission;
 
 	// Point lights
 	vec3 viewDir = normalize(u_cameraPos - worldPos);
@@ -209,17 +113,17 @@ void main()
 
 		LIGHTING_COMMON_BRDF();
 
-		if(light.diffuseColorShadowmapId.w >= 0.0)
+		if(light.diffuseColorTileSize.w >= 0.0)
 		{
 			float shadow = computeShadowFactorOmni(frag2Light, 
-				light.specularColorRadius.w, 
+				light.radiusPad3.x, 
 				light.atlasTilesPad2.xy, 
-				light.diffuseColorShadowmapId.w,
+				light.diffuseColorTileSize.w,
 				u_shadowTex);
 			lambert *= shadow;
 		}
 
-		outC += (diffC + specC) * (att * max(subsurface, lambert));
+		outC += (diffC + specC) * light.diffuseColorTileSize.rgb * (att * max(gbuffer.subsurface, lambert));
 	}
 
 	// Spot lights
@@ -230,35 +134,22 @@ void main()
 
 		LIGHTING_COMMON_BRDF();
 
-		float spot = computeSpotFactor(l, light.outerCosInnerCos.x, light.outerCosInnerCos.y, light.lightDir.xyz);
+		float spot = computeSpotFactor(
+			l, light.outerCosInnerCos.x, light.outerCosInnerCos.y, light.lightDirRadius.xyz);
 
 		float shadowmapLayerIdx = light.diffuseColorShadowmapId.w;
 		if(shadowmapLayerIdx >= 0.0)
 		{
 			float shadow = computeShadowFactorSpot(
-				light.texProjectionMat, worldPos, light.specularColorRadius.w, u_shadowTex);
+				light.texProjectionMat, worldPos, light.lightDirRadius.w, u_shadowTex);
 			lambert *= shadow;
 		}
 
-		outC += (diffC + specC) * (att * spot * max(subsurface, lambert));
+		outC += (diffC + specC) * light.diffuseColorShadowmapId.rgb * (att * spot * max(gbuffer.subsurface, lambert));
 	}
 
 	// Indirect
-	{
-		vec3 eye = -viewDir;
-		vec3 reflVec = reflect(eye, normal);
-
-		float reflLod = float(IR_MIPMAP_COUNT - 1u) * a2;
-
-		vec3 specIndirect, diffIndirect;
-		readIndirect(idxOffset, worldPos, reflVec, normal, reflLod, specIndirect, diffIndirect);
-
-		float ndotv = dot(normal, viewDir);
-		vec2 envBRDF = texture(u_integrationLut, vec2(a2, ndotv)).xy;
-		vec3 specIndirectTerm = specCol * envBRDF.x + envBRDF.y;
-
-		outC += specIndirect * specIndirectTerm + diffIndirect * diffCol;
-	}
+	outC += textureLod(u_indirectRt, in_uv, 0.0).rgb;
 
 	out_color = outC;
 #if 0

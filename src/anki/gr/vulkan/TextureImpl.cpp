@@ -52,14 +52,6 @@ Error TextureImpl::init(const TextureInitInfo& init_)
 	m_height = init.m_height;
 	m_depth = init.m_depth;
 	m_texType = init.m_type;
-	if(init.getName())
-	{
-		strcpy(&m_name[0], init.getName().cstr());
-	}
-	else
-	{
-		m_name[0] = '\0';
-	}
 
 	if(m_texType == TextureType::_3D)
 	{
@@ -135,7 +127,7 @@ VkFormatFeatureFlags TextureImpl::calcFeatures(const TextureInitInfo& init)
 
 	if(!!(init.m_usage & TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE))
 	{
-		if(componentFormatIsDepthStencil(init.m_format.m_components))
+		if(formatIsDepthStencil(init.m_format))
 		{
 			flags |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
 		}
@@ -192,35 +184,37 @@ Error TextureImpl::initImage(const TextureInitInfo& init_)
 {
 	TextureInitInfo init = init_;
 	Bool useDedicatedMemory = !!(init.m_usage & TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE)
-		&& !!(getGrManagerImpl().getExtensions() & VulkanExtensions::NV_DEDICATED_ALLOCATION);
+							  && !!(getGrManagerImpl().getExtensions() & VulkanExtensions::NV_DEDICATED_ALLOCATION);
 
 	// Check if format is supported
 	Bool supported;
 	while(!(supported = imageSupported(init)))
 	{
 		// Try to find a fallback
-		if(init.m_format.m_components == ComponentFormat::R8G8B8)
+		if(init.m_format >= Format::R8G8B8_UNORM && init.m_format <= Format::R8G8B8_SRGB)
 		{
 			ANKI_ASSERT(!(init.m_usage & TextureUsageBit::IMAGE_ALL) && "Can't do that ATM");
-			init.m_format.m_components = ComponentFormat::R8G8B8A8;
+			const U idx = U(init.m_format) - U(Format::R8G8B8_UNORM);
+			init.m_format = Format(U(Format::R8G8B8A8_UNORM) + idx);
+			ANKI_ASSERT(init.m_format >= Format::R8G8B8A8_UNORM && init.m_format <= Format::R8G8B8A8_SRGB);
 			m_format = init.m_format;
 			m_vkFormat = convertFormat(m_format);
 			m_workarounds = TextureImplWorkaround::R8G8B8_TO_R8G8B8A8;
 		}
-		else if(init.m_format.m_components == ComponentFormat::S8)
+		else if(init.m_format == Format::S8_UINT)
 		{
 			ANKI_ASSERT(
 				!(init.m_usage & (TextureUsageBit::IMAGE_ALL | TextureUsageBit::TRANSFER_ANY)) && "Can't do that ATM");
-			init.m_format = PixelFormat(ComponentFormat::D24S8, TransformFormat::UNORM);
+			init.m_format = Format::D24_UNORM_S8_UINT;
 			m_format = init.m_format;
 			m_vkFormat = convertFormat(m_format);
 			m_workarounds = TextureImplWorkaround::S8_TO_D24S8;
 		}
-		else if(init.m_format.m_components == ComponentFormat::D24S8)
+		else if(init.m_format == Format::D24_UNORM_S8_UINT)
 		{
 			ANKI_ASSERT(
 				!(init.m_usage & (TextureUsageBit::IMAGE_ALL | TextureUsageBit::TRANSFER_ANY)) && "Can't do that ATM");
-			init.m_format = PixelFormat(ComponentFormat::D32S8, TransformFormat::UNORM);
+			init.m_format = Format::D32_SFLOAT_S8_UINT;
 			m_format = init.m_format;
 			m_vkFormat = convertFormat(m_format);
 			m_workarounds = TextureImplWorkaround::D24S8_TO_D32S8;
@@ -233,7 +227,7 @@ Error TextureImpl::initImage(const TextureInitInfo& init_)
 
 	if(!supported)
 	{
-		ANKI_VK_LOGE("Unsupported texture format: %u %u", U(init.m_format.m_components), U(init.m_format.m_transform));
+		ANKI_VK_LOGE("Unsupported texture format: %u", U(init.m_format));
 		return Error::FUNCTION_FAILED;
 	}
 
@@ -620,13 +614,13 @@ VkImageLayout TextureImpl::computeLayout(TextureUsageBit usage, U level) const
 		}
 	}
 	else if(depthStencil
-		&& !(usage & ~(TextureUsageBit::SAMPLED_ALL_GRAPHICS | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ)))
+			&& !(usage & ~(TextureUsageBit::SAMPLED_ALL_GRAPHICS | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ)))
 	{
 		// FB read & shader read
 		out = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 	}
 	else if(depthStencil
-		&& !(usage & ~(TextureUsageBit::SAMPLED_ALL_GRAPHICS | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE)))
+			&& !(usage & ~(TextureUsageBit::SAMPLED_ALL_GRAPHICS | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE)))
 	{
 		// Wild guess: One aspect is shader read and the other is read write
 		out = VK_IMAGE_LAYOUT_GENERAL;
@@ -676,7 +670,7 @@ VkImageView TextureImpl::getOrCreateView(const TextureSubresourceInfo& subresour
 		VkImageView view = VK_NULL_HANDLE;
 		ANKI_VK_CHECKF(vkCreateImageView(getDevice(), &viewCi, nullptr, &view));
 		getGrManagerImpl().trySetVulkanHandleName(
-			(m_name[0]) ? &m_name[0] : CString(), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT, ptrToNumber(view));
+			getName(), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT, ptrToNumber(view));
 
 		m_viewsMap.emplace(getAllocator(), subresource, view);
 

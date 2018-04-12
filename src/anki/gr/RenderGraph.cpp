@@ -217,8 +217,8 @@ void FramebufferDescription::bake()
 	ANKI_ASSERT(m_hash != 0 && m_hash != 1);
 }
 
-RenderGraph::RenderGraph(GrManager* manager)
-	: GrObject(manager, CLASS_TYPE)
+RenderGraph::RenderGraph(GrManager* manager, CString name)
+	: GrObject(manager, CLASS_TYPE, name)
 {
 	ANKI_ASSERT(manager);
 }
@@ -240,7 +240,7 @@ RenderGraph::~RenderGraph()
 
 RenderGraph* RenderGraph::newInstance(GrManager* manager)
 {
-	return manager->getAllocator().newInstance<RenderGraph>(manager);
+	return manager->getAllocator().newInstance<RenderGraph>(manager, "N/A");
 }
 
 void RenderGraph::reset()
@@ -435,7 +435,7 @@ Bool RenderGraph::overlappingDependency(const RenderPassDependency& a, const Ren
 	if(isTexture)
 	{
 		return a.m_texture.m_handle == b.m_texture.m_handle
-			&& overlappingTextureSubresource(a.m_texture.m_subresource, b.m_texture.m_subresource);
+			   && overlappingTextureSubresource(a.m_texture.m_subresource, b.m_texture.m_subresource);
 	}
 	else
 	{
@@ -1059,11 +1059,11 @@ StringAuto RenderGraph::textureUsageToStr(StackAllocator<U8>& alloc, TextureUsag
 {
 	StringListAuto slist(alloc);
 
-#define ANKI_TEX_USAGE(u)                \
-	if(!!(usage & TextureUsageBit::u))   \
-	{                                    \
-		slist.pushBackSprintf("%s", #u); \
-	}
+#	define ANKI_TEX_USAGE(u) \
+		if(!!(usage & TextureUsageBit::u)) \
+		{ \
+			slist.pushBackSprintf("%s", #u); \
+		}
 
 	ANKI_TEX_USAGE(SAMPLED_VERTEX);
 	ANKI_TEX_USAGE(SAMPLED_TESSELLATION_CONTROL);
@@ -1084,7 +1084,7 @@ StringAuto RenderGraph::textureUsageToStr(StackAllocator<U8>& alloc, TextureUsag
 		slist.pushBackSprintf("NONE");
 	}
 
-#undef ANKI_TEX_USAGE
+#	undef ANKI_TEX_USAGE
 
 	ANKI_ASSERT(!slist.isEmpty());
 	StringAuto str(alloc);
@@ -1096,11 +1096,11 @@ StringAuto RenderGraph::bufferUsageToStr(StackAllocator<U8>& alloc, BufferUsageB
 {
 	StringListAuto slist(alloc);
 
-#define ANKI_BUFF_USAGE(u)               \
-	if(!!(usage & BufferUsageBit::u))    \
-	{                                    \
-		slist.pushBackSprintf("%s", #u); \
-	}
+#	define ANKI_BUFF_USAGE(u) \
+		if(!!(usage & BufferUsageBit::u)) \
+		{ \
+			slist.pushBackSprintf("%s", #u); \
+		}
 
 	ANKI_BUFF_USAGE(UNIFORM_VERTEX);
 	ANKI_BUFF_USAGE(UNIFORM_TESSELLATION_EVALUATION);
@@ -1140,7 +1140,7 @@ StringAuto RenderGraph::bufferUsageToStr(StackAllocator<U8>& alloc, BufferUsageB
 		slist.pushBackSprintf("NONE");
 	}
 
-#undef ANKI_BUFF_USAGE
+#	undef ANKI_BUFF_USAGE
 
 	ANKI_ASSERT(!slist.isEmpty());
 	StringAuto str(alloc);
@@ -1190,7 +1190,7 @@ Error RenderGraph::dumpDependencyDotFile(
 		}
 	}
 
-#if 0
+#	if 0
 	// Color the resources
 	slist.pushBackSprintf("subgraph cluster_0 {\n");
 	for(U rtIdx = 0; rtIdx < descr.m_renderTargets.getSize(); ++rtIdx)
@@ -1198,7 +1198,7 @@ Error RenderGraph::dumpDependencyDotFile(
 		slist.pushBackSprintf("\t\"%s\"[color=%s];\n", &descr.m_renderTargets[rtIdx].m_name[0], COLORS[rtIdx % 6]);
 	}
 	slist.pushBackSprintf("}\n");
-#endif
+#	endif
 
 	// Barriers
 	// slist.pushBackSprintf("subgraph cluster_1 {\n");
@@ -1218,7 +1218,7 @@ Error RenderGraph::dumpDependencyDotFile(
 			StringAuto barrierLabel(ctx.m_alloc);
 			if(barrier.m_isTexture)
 			{
-				barrierLabel.sprintf("<b>%s</b> (mip,dp,f,l)=(%u,%u,%u,%u)<br/>%s <b>-&gt;</b> %s",
+				barrierLabel.sprintf("<b>%s</b> (mip,dp,f,l)=(%u,%u,%u,%u)<br/>%s <b>to</b> %s",
 					&descr.m_renderTargets[barrier.m_texture.m_idx].m_name[0],
 					barrier.m_texture.m_surface.m_level,
 					barrier.m_texture.m_surface.m_depth,
@@ -1231,7 +1231,7 @@ Error RenderGraph::dumpDependencyDotFile(
 			}
 			else
 			{
-				barrierLabel.sprintf("<b>%s</b><br/>%s <b>-&gt;</b> %s",
+				barrierLabel.sprintf("<b>%s</b><br/>%s <b>to</b> %s",
 					&descr.m_buffers[barrier.m_buffer.m_idx].m_name[0],
 					bufferUsageToStr(alloc, barrier.m_buffer.m_usageBefore).cstr(),
 					bufferUsageToStr(alloc, barrier.m_buffer.m_usageAfter).cstr());

@@ -8,17 +8,17 @@
 #include <anki/gr/Common.h>
 
 #if ANKI_GL == ANKI_GL_DESKTOP
-#if ANKI_OS == ANKI_OS_WINDOWS && !defined(GLEW_STATIC)
-#define GLEW_STATIC
-#endif
-#include <GL/glew.h>
-#if !defined(ANKI_GLEW_H)
-#error "Wrong GLEW included"
-#endif
+#	if ANKI_OS == ANKI_OS_WINDOWS && !defined(GLEW_STATIC)
+#		define GLEW_STATIC
+#	endif
+#	include <GL/glew.h>
+#	if !defined(ANKI_GLEW_H)
+#		error "Wrong GLEW included"
+#	endif
 #elif ANKI_GL == ANKI_GL_ES
-#include <GLES3/gl3.h>
+#	include <GLES3/gl3.h>
 #else
-#error "See file"
+#	error "See file"
 #endif
 
 namespace anki
@@ -73,7 +73,7 @@ inline GLenum convertFaceMode(FaceSelectionBit in)
 
 void convertFilter(SamplingFilter minMagFilter, SamplingFilter mipFilter, GLenum& minFilter, GLenum& magFilter);
 
-void convertVertexFormat(const PixelFormat& fmt, U& compCount, GLenum& type, Bool& normalized);
+void convertVertexFormat(Format fmt, U& compCount, GLenum& type, Bool& normalized);
 
 inline GLenum convertIndexType(IndexType ak)
 {
@@ -178,7 +178,7 @@ inline GLenum convertPrimitiveTopology(PrimitiveTopology ak)
 	return out;
 }
 
-void convertTextureInformation(const PixelFormat& pf,
+void convertTextureInformation(Format pf,
 	Bool8& compressed,
 	GLenum& format,
 	GLenum& internalFormat,

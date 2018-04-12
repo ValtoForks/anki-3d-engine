@@ -78,6 +78,16 @@ Error ShaderProgramImpl::init(const ShaderProgramInitInfo& inf)
 					bindings[set][counts[set]++] = simpl.m_bindings[set][i];
 				}
 			}
+
+			if(simpl.m_pushConstantsSize > 0)
+			{
+				if(m_refl.m_pushConstantsSize > 0)
+				{
+					ANKI_ASSERT(m_refl.m_pushConstantsSize == simpl.m_pushConstantsSize);
+				}
+
+				m_refl.m_pushConstantsSize = max(m_refl.m_pushConstantsSize, simpl.m_pushConstantsSize);
+			}
 		}
 
 		if(counts[set])
@@ -101,7 +111,8 @@ Error ShaderProgramImpl::init(const ShaderProgramInitInfo& inf)
 	//
 	WeakArray<DescriptorSetLayout> dsetLayouts(
 		(descriptorSetCount) ? &m_descriptorSetLayouts[0] : nullptr, descriptorSetCount);
-	ANKI_CHECK(getGrManagerImpl().getPipelineLayoutFactory().newPipelineLayout(dsetLayouts, m_pplineLayout));
+	ANKI_CHECK(getGrManagerImpl().getPipelineLayoutFactory().newPipelineLayout(
+		dsetLayouts, m_refl.m_pushConstantsSize, m_pplineLayout));
 
 	// Get some masks
 	//

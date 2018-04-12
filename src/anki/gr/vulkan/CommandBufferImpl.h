@@ -28,7 +28,7 @@ class CommandBufferInitInfo;
 /// @addtogroup vulkan
 /// @{
 
-#define ANKI_CMD(x_, t_)                        \
+#define ANKI_CMD(x_, t_) \
 	flushBatches(CommandBufferCommandType::t_); \
 	x_;
 
@@ -47,8 +47,8 @@ class CommandBufferImpl final : public CommandBuffer, public VulkanObject<Comman
 {
 public:
 	/// Default constructor
-	CommandBufferImpl(GrManager* manager)
-		: CommandBuffer(manager)
+	CommandBufferImpl(GrManager* manager, CString name)
+		: CommandBuffer(manager, name)
 	{
 	}
 
@@ -91,7 +91,7 @@ public:
 		m_microCmdb->pushObjectRef(buff);
 	}
 
-	void setVertexAttribute(U32 location, U32 buffBinding, const PixelFormat& fmt, PtrSize relativeOffset)
+	void setVertexAttribute(U32 location, U32 buffBinding, const Format fmt, PtrSize relativeOffset)
 	{
 		commandCommon();
 		m_state.setVertexAttribute(location, buffBinding, fmt, relativeOffset);
@@ -329,6 +329,8 @@ public:
 
 	void copyBufferToBuffer(BufferPtr& src, PtrSize srcOffset, BufferPtr& dst, PtrSize dstOffset, PtrSize range);
 
+	void setPushConstants(const void* data, U32 dataSize);
+
 private:
 	StackAllocator<U8> m_alloc;
 
@@ -342,6 +344,7 @@ private:
 	ThreadId m_tid = ~ThreadId(0);
 #if ANKI_EXTRA_CHECKS
 	U32 m_commandCount = 0;
+	U32 m_setPushConstantsSize = 0;
 #endif
 
 	U m_rpCommandCount = 0; ///< Number of drawcalls or pushed cmdbs in rp.
@@ -374,6 +377,9 @@ private:
 	Array<U32, 2> m_stencilCompareMasks = {{0x5A5A5A5A, 0x5A5A5A5A}}; ///< Use a stupid number to initialize.
 	Array<U32, 2> m_stencilWriteMasks = {{0x5A5A5A5A, 0x5A5A5A5A}};
 	Array<U32, 2> m_stencilReferenceMasks = {{0x5A5A5A5A, 0x5A5A5A5A}};
+
+	/// Rebind the above dynamic state. Needed after pushing secondary command buffers (they dirty the state).
+	void rebindDynamicState();
 	/// @}
 
 	/// @name barrier_batch

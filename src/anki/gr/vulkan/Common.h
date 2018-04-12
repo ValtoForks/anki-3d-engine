@@ -8,11 +8,11 @@
 #include <anki/gr/Common.h>
 
 #if ANKI_OS == ANKI_OS_LINUX
-#define VK_USE_PLATFORM_XCB_KHR 1
+#	define VK_USE_PLATFORM_XCB_KHR 1
 #elif ANKI_OS == ANKI_OS_WINDOWS
-#define VK_USE_PLATFORM_WIN32_KHR 1
+#	define VK_USE_PLATFORM_WIN32_KHR 1
 #else
-#error TODO
+#	error TODO
 #endif
 #include <vulkan/vulkan.h>
 #include <anki/util/CleanupWindows.h> // Clean global namespace
@@ -58,44 +58,49 @@ const U DESCRIPTOR_FRAME_BUFFERING = 60 * 5; ///< How many frames worth of descr
 /// @}
 
 /// Check if a vulkan function failed. It will abort on failure.
-#define ANKI_VK_CHECKF(x)                                                       \
-	do                                                                          \
-	{                                                                           \
-		VkResult rez;                                                           \
-		if((rez = (x)) < 0)                                                     \
-		{                                                                       \
+#define ANKI_VK_CHECKF(x) \
+	do \
+	{ \
+		VkResult rez; \
+		if((rez = (x)) < 0) \
+		{ \
 			ANKI_VK_LOGF("Vulkan function failed (VkResult: %d): %s", rez, #x); \
-		}                                                                       \
+		} \
 	} while(0)
 
 /// Check if a vulkan function failed.
-#define ANKI_VK_CHECK(x)                                                        \
-	do                                                                          \
-	{                                                                           \
-		VkResult rez;                                                           \
-		if((rez = (x)) < 0)                                                     \
-		{                                                                       \
+#define ANKI_VK_CHECK(x) \
+	do \
+	{ \
+		VkResult rez; \
+		if((rez = (x)) < 0) \
+		{ \
 			ANKI_VK_LOGE("Vulkan function failed (VkResult: %d): %s", rez, #x); \
-			return Error::FUNCTION_FAILED;                                      \
-		}                                                                       \
+			return Error::FUNCTION_FAILED; \
+		} \
 	} while(0)
 
 /// Convert compare op.
 ANKI_USE_RESULT VkCompareOp convertCompareOp(CompareOperation ak);
 
 /// Convert format.
-ANKI_USE_RESULT VkFormat convertFormat(PixelFormat ak);
+ANKI_USE_RESULT inline VkFormat convertFormat(const Format ak)
+{
+	ANKI_ASSERT(ak != Format::NONE);
+	const VkFormat out = static_cast<VkFormat>(ak);
+	return out;
+}
 
 /// Get format aspect mask.
-ANKI_USE_RESULT inline DepthStencilAspectBit getImageAspectFromFormat(const PixelFormat& ak)
+ANKI_USE_RESULT inline DepthStencilAspectBit getImageAspectFromFormat(const Format ak)
 {
 	DepthStencilAspectBit out = DepthStencilAspectBit::NONE;
-	if(componentFormatIsStencil(ak.m_components))
+	if(formatIsStencil(ak))
 	{
 		out = DepthStencilAspectBit::STENCIL;
 	}
 
-	if(componentFormatIsDepth(ak.m_components))
+	if(formatIsDepth(ak))
 	{
 		out |= DepthStencilAspectBit::DEPTH;
 	}
@@ -159,7 +164,7 @@ ANKI_USE_RESULT VkImageType convertTextureType(TextureType ak);
 
 ANKI_USE_RESULT VkImageViewType convertTextureViewType(TextureType ak);
 
-ANKI_USE_RESULT VkImageUsageFlags convertTextureUsage(TextureUsageBit ak, const PixelFormat& format);
+ANKI_USE_RESULT VkImageUsageFlags convertTextureUsage(const TextureUsageBit ak, const Format format);
 
 ANKI_USE_RESULT VkStencilOp convertStencilOp(StencilOperation ak);
 

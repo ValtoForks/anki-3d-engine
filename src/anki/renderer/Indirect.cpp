@@ -10,7 +10,7 @@
 #include <anki/renderer/RenderQueue.h>
 #include <anki/core/Config.h>
 #include <anki/core/Trace.h>
-#include <anki/resource/MeshLoader.h>
+#include <anki/resource/MeshResource.h>
 
 namespace anki
 {
@@ -27,7 +27,6 @@ struct Indirect::LightPassPointLightUniforms
 	Vec4 m_camPosPad1;
 	Vec4 m_posRadius;
 	Vec4 m_diffuseColorPad1;
-	Vec4 m_specularColorPad1;
 };
 
 struct Indirect::LightPassSpotLightUniforms
@@ -37,8 +36,7 @@ struct Indirect::LightPassSpotLightUniforms
 	Vec4 m_camPosPad1;
 	Vec4 m_posRadius;
 	Vec4 m_diffuseColorOuterCos;
-	Vec4 m_specularColorInnerCos;
-	Vec4 m_lightDirPad1;
+	Vec4 m_lightDirInnerCos;
 };
 
 Indirect::Indirect(Renderer* r)
@@ -84,59 +82,6 @@ Error Indirect::initInternal(const ConfigSet& config)
 	sinit.m_maxLod = 1.0;
 	sinit.m_repeat = false;
 	m_integrationLutSampler = getGrManager().newSampler(sinit);
-
-	return Error::NONE;
-}
-
-Error Indirect::loadMesh(CString fname, BufferPtr& vert, BufferPtr& idx, U32& idxCount)
-{
-	MeshLoader loader(&getResourceManager());
-	ANKI_CHECK(loader.load(fname));
-
-	PtrSize vertBuffSize = loader.getHeader().m_totalVerticesCount * sizeof(Vec3);
-	vert = getGrManager().newBuffer(BufferInitInfo(vertBuffSize,
-		BufferUsageBit::VERTEX | BufferUsageBit::BUFFER_UPLOAD_DESTINATION,
-		BufferMapAccessBit::NONE,
-		"IndirectMesh"));
-
-	idx = getGrManager().newBuffer(BufferInitInfo(loader.getIndexDataSize(),
-		BufferUsageBit::INDEX | BufferUsageBit::BUFFER_UPLOAD_DESTINATION,
-		BufferMapAccessBit::NONE,
-		"IndirectMesh"));
-
-	// Upload data
-	CommandBufferInitInfo init;
-	init.m_flags = CommandBufferFlag::SMALL_BATCH;
-	CommandBufferPtr cmdb = getGrManager().newCommandBuffer(init);
-
-	TransferGpuAllocatorHandle handle;
-	ANKI_CHECK(m_r->getResourceManager().getTransferGpuAllocator().allocate(vertBuffSize, handle));
-
-	Vec3* verts = static_cast<Vec3*>(handle.getMappedMemory());
-
-	const U8* ptr = loader.getVertexData();
-	for(U i = 0; i < loader.getHeader().m_totalVerticesCount; ++i)
-	{
-		*verts = *reinterpret_cast<const Vec3*>(ptr);
-		++verts;
-		ptr += loader.getVertexSize();
-	}
-
-	cmdb->copyBufferToBuffer(handle.getBuffer(), handle.getOffset(), vert, 0, handle.getRange());
-
-	TransferGpuAllocatorHandle handle2;
-	ANKI_CHECK(m_r->getResourceManager().getTransferGpuAllocator().allocate(loader.getIndexDataSize(), handle2));
-	void* cpuIds = handle2.getMappedMemory();
-
-	memcpy(cpuIds, loader.getIndexData(), loader.getIndexDataSize());
-
-	cmdb->copyBufferToBuffer(handle2.getBuffer(), handle2.getOffset(), idx, 0, handle2.getRange());
-	idxCount = loader.getHeader().m_totalIndicesCount;
-
-	FencePtr fence;
-	cmdb->flush(&fence);
-	m_r->getResourceManager().getTransferGpuAllocator().release(handle, fence);
-	m_r->getResourceManager().getTransferGpuAllocator().release(handle2, fence);
 
 	return Error::NONE;
 }
@@ -199,8 +144,8 @@ Error Indirect::initLightShading(const ConfigSet& config)
 		TextureInitInfo texinit = m_r->create2DRenderTargetInitInfo(m_lightShading.m_tileSize,
 			m_lightShading.m_tileSize,
 			LIGHT_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT,
-			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE
-				| TextureUsageBit::GENERATE_MIPMAPS,
+			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::SAMPLED_COMPUTE
+				| TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE | TextureUsageBit::GENERATE_MIPMAPS,
 			"GI refl");
 		texinit.m_mipmapCount = m_lightShading.m_mipCount;
 		texinit.m_type = TextureType::CUBE_ARRAY;
@@ -229,16 +174,9 @@ Error Indirect::initLightShading(const ConfigSet& config)
 		m_lightShading.m_slightGrProg = variant->getProgram();
 	}
 
-	// Init vert/idx buffers
-	ANKI_CHECK(loadMesh("engine_data/Plight.ankimesh",
-		m_lightShading.m_plightPositions,
-		m_lightShading.m_plightIndices,
-		m_lightShading.m_plightIdxCount));
-
-	ANKI_CHECK(loadMesh("engine_data/Slight.ankimesh",
-		m_lightShading.m_slightPositions,
-		m_lightShading.m_slightIndices,
-		m_lightShading.m_slightIdxCount));
+	// Init meshes
+	ANKI_CHECK(getResourceManager().loadResource("engine_data/Plight.ankimesh", m_lightShading.m_plightMesh, false));
+	ANKI_CHECK(getResourceManager().loadResource("engine_data/Slight.ankimesh", m_lightShading.m_slightMesh, false));
 
 	return Error::NONE;
 }
@@ -250,7 +188,8 @@ Error Indirect::initIrradiance(const ConfigSet& config)
 		TextureInitInfo texinit = m_r->create2DRenderTargetInitInfo(m_irradiance.m_tileSize,
 			m_irradiance.m_tileSize,
 			LIGHT_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT,
-			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE,
+			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::SAMPLED_COMPUTE
+				| TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE,
 			"GI irr");
 
 		texinit.m_layerCount = m_cacheEntries.getSize();
@@ -439,6 +378,30 @@ void Indirect::runGBuffer(CommandBufferPtr& cmdb)
 	cmdb->setScissor(0, 0, MAX_U32, MAX_U32);
 }
 
+void Indirect::bindVertexIndexBuffers(MeshResourcePtr& mesh, CommandBufferPtr& cmdb, U32& indexCount)
+{
+	// Attrib
+	U32 bufferBinding;
+	Format fmt;
+	PtrSize relativeOffset;
+	mesh->getVertexAttributeInfo(VertexAttributeLocation::POSITION, bufferBinding, fmt, relativeOffset);
+
+	cmdb->setVertexAttribute(0, 0, fmt, relativeOffset);
+
+	// Vert buff
+	BufferPtr buff;
+	PtrSize offset, stride;
+	mesh->getVertexBufferInfo(bufferBinding, buff, offset, stride);
+
+	cmdb->bindVertexBuffer(0, buff, offset, stride);
+
+	// Idx buff
+	IndexType idxType;
+	mesh->getIndexBufferInfo(buff, offset, indexCount, idxType);
+
+	cmdb->bindIndexBuffer(buff, offset, idxType);
+}
+
 void Indirect::runLightShading(U32 faceIdx, RenderPassWorkContext& rgraphCtx)
 {
 	ANKI_ASSERT(faceIdx <= 6);
@@ -460,7 +423,6 @@ void Indirect::runLightShading(U32 faceIdx, RenderPassWorkContext& rgraphCtx)
 		m_ctx.m_gbufferDepthRt,
 		TextureSubresourceInfo(DepthStencilAspectBit::DEPTH),
 		m_r->getNearestSampler());
-	cmdb->setVertexAttribute(0, 0, PixelFormat(ComponentFormat::R32G32B32, TransformFormat::FLOAT), 0);
 	cmdb->setViewport(0, 0, m_lightShading.m_tileSize, m_lightShading.m_tileSize);
 	cmdb->setBlendFactors(0, BlendFactor::ONE, BlendFactor::ONE);
 	cmdb->setCullMode(FaceSelectionBit::FRONT);
@@ -474,9 +436,9 @@ void Indirect::runLightShading(U32 faceIdx, RenderPassWorkContext& rgraphCtx)
 		const Mat4 invViewProjMat = rqueue.m_viewProjectionMatrix.getInverse();
 
 		// Do point lights
+		U32 indexCount;
+		bindVertexIndexBuffers(m_lightShading.m_plightMesh, cmdb, indexCount);
 		cmdb->bindShaderProgram(m_lightShading.m_plightGrProg);
-		cmdb->bindVertexBuffer(0, m_lightShading.m_plightPositions, 0, sizeof(F32) * 3);
-		cmdb->bindIndexBuffer(m_lightShading.m_plightIndices, 0, IndexType::U16);
 
 		const PointLightQueueElement* plightEl = rqueue.m_pointLights.getBegin();
 		while(plightEl != rqueue.m_pointLights.getEnd())
@@ -498,18 +460,16 @@ void Indirect::runLightShading(U32 faceIdx, RenderPassWorkContext& rgraphCtx)
 			light->m_posRadius =
 				Vec4(plightEl->m_worldPosition.xyz(), 1.0f / (plightEl->m_radius * plightEl->m_radius));
 			light->m_diffuseColorPad1 = plightEl->m_diffuseColor.xyz0();
-			light->m_specularColorPad1 = plightEl->m_specularColor.xyz0();
 
 			// Draw
-			cmdb->drawElements(PrimitiveTopology::TRIANGLES, m_lightShading.m_plightIdxCount);
+			cmdb->drawElements(PrimitiveTopology::TRIANGLES, indexCount);
 
 			++plightEl;
 		}
 
 		// Do spot lights
+		bindVertexIndexBuffers(m_lightShading.m_slightMesh, cmdb, indexCount);
 		cmdb->bindShaderProgram(m_lightShading.m_slightGrProg);
-		cmdb->bindVertexBuffer(0, m_lightShading.m_slightPositions, 0, sizeof(F32) * 3);
-		cmdb->bindIndexBuffer(m_lightShading.m_slightIndices, 0, IndexType::U16);
 
 		const SpotLightQueueElement* splightEl = rqueue.m_spotLights.getBegin();
 		while(splightEl != rqueue.m_spotLights.getEnd())
@@ -546,13 +506,11 @@ void Indirect::runLightShading(U32 faceIdx, RenderPassWorkContext& rgraphCtx)
 
 			light->m_diffuseColorOuterCos = Vec4(splightEl->m_diffuseColor, cos(splightEl->m_outerAngle / 2.0f));
 
-			light->m_specularColorInnerCos = Vec4(splightEl->m_specularColor, cos(splightEl->m_innerAngle / 2.0f));
-
 			Vec3 lightDir = -splightEl->m_worldTransform.getZAxis().xyz();
-			light->m_lightDirPad1 = lightDir.xyz0();
+			light->m_lightDirInnerCos = Vec4(lightDir, cos(splightEl->m_innerAngle / 2.0f));
 
 			// Draw
-			cmdb->drawElements(PrimitiveTopology::TRIANGLES, m_lightShading.m_slightIdxCount);
+			cmdb->drawElements(PrimitiveTopology::TRIANGLES, indexCount);
 
 			++splightEl;
 		}
@@ -803,7 +761,7 @@ Bool Indirect::findBestCacheEntry(U64 probeUuid, U32& cacheEntryIdxAllocated, Bo
 			break;
 		}
 		else if(m_cacheEntries[cacheEntryIdx].m_lastUsedTimestamp != m_r->getGlobalTimestamp()
-			&& m_cacheEntries[cacheEntryIdx].m_lastUsedTimestamp < cacheEntryIdxToKickMinTimestamp)
+				&& m_cacheEntries[cacheEntryIdx].m_lastUsedTimestamp < cacheEntryIdxToKickMinTimestamp)
 		{
 			// Found some with low timestamp
 			cacheEntryIdxToKick = cacheEntryIdx;

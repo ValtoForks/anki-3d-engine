@@ -70,7 +70,7 @@ vec4 textureCatmullRom4Samples(sampler2D tex, vec2 uv, vec2 texSize)
 	w.xz *= halff.x * halff.y > 0.0 ? 1.0 : -1.0;
 
 	return (texture(tex, pos.xy) * w.x + texture(tex, pos.zy) * w.z) * w.y
-		+ (texture(tex, pos.xw) * w.x + texture(tex, pos.zw) * w.z) * w.w;
+		   + (texture(tex, pos.xw) * w.x + texture(tex, pos.zw) * w.z) * w.w;
 }
 
 float rand(vec2 n)
@@ -290,7 +290,7 @@ vec3 readErosion(sampler2D tex, vec2 uv)
 {
 	vec3 minValue = textureLod(tex, uv, 0.0).rgb;
 
-#define ANKI_EROSION(x, y)                                  \
+#define ANKI_EROSION(x, y) \
 	col2 = textureLodOffset(tex, uv, 0.0, ivec2(x, y)).rgb; \
 	minValue = min(col2, minValue);
 
@@ -308,4 +308,34 @@ vec3 readErosion(sampler2D tex, vec2 uv)
 
 	return minValue;
 }
+
+// 5 color heatmap from a factor.
+vec3 heatmap(float factor)
+{
+	float intPart;
+	float fractional = modf(factor * 4.0, intPart);
+
+	if(intPart < 1.0)
+	{
+		return mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), fractional);
+	}
+	else if(intPart < 2.0)
+	{
+		return mix(vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), fractional);
+	}
+	else if(intPart < 3.0)
+	{
+		return mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 1.0, 0.0), fractional);
+	}
+	else
+	{
+		return mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), fractional);
+	}
+}
+
+bool incorrectColor(vec3 c)
+{
+	return isnan(c.x) || isnan(c.y) || isnan(c.z) || isinf(c.x) || isinf(c.y) || isinf(c.z);
+}
+
 #endif

@@ -71,7 +71,7 @@ void Font::createTexture(const void* data, U32 width, U32 height)
 	// Create and populate the buffer
 	PtrSize buffSize = width * height * 4;
 	BufferPtr buff = m_manager->getGrManager().newBuffer(
-		BufferInitInfo(buffSize, BufferUsageBit::BUFFER_UPLOAD_DESTINATION, BufferMapAccessBit::WRITE, "UI"));
+		BufferInitInfo(buffSize, BufferUsageBit::BUFFER_UPLOAD_SOURCE, BufferMapAccessBit::WRITE, "UI"));
 	void* mapped = buff->map(0, buffSize, BufferMapAccessBit::WRITE);
 	memcpy(mapped, data, buffSize);
 	buff->unmap();
@@ -80,7 +80,7 @@ void Font::createTexture(const void* data, U32 width, U32 height)
 	TextureInitInfo texInit("Font");
 	texInit.m_width = width;
 	texInit.m_height = height;
-	texInit.m_format = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+	texInit.m_format = Format::R8G8B8A8_UNORM;
 	texInit.m_usage =
 		TextureUsageBit::TRANSFER_DESTINATION | TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::GENERATE_MIPMAPS;
 	texInit.m_mipmapCount = 4;

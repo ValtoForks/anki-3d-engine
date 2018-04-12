@@ -7,9 +7,11 @@
 #include <anki/renderer/RenderQueue.h>
 #include <anki/core/Trace.h>
 #include <anki/misc/ConfigSet.h>
+#include <anki/util/HighRezTimer.h>
 
 #include <anki/renderer/Indirect.h>
 #include <anki/renderer/GBuffer.h>
+#include <anki/renderer/GBufferPost.h>
 #include <anki/renderer/LightShading.h>
 #include <anki/renderer/ShadowMapping.h>
 #include <anki/renderer/FinalComposite.h>
@@ -44,7 +46,6 @@ Error Renderer::init(ThreadPool* threadpool,
 	StagingGpuMemoryManager* stagingMem,
 	UiManager* ui,
 	HeapAllocator<U8> alloc,
-	StackAllocator<U8> frameAlloc,
 	const ConfigSet& config,
 	Timestamp* globTimestamp,
 	Bool willDrawToDefaultFbo)
@@ -58,7 +59,6 @@ Error Renderer::init(ThreadPool* threadpool,
 	m_stagingMem = stagingMem;
 	m_ui = ui;
 	m_alloc = alloc;
-	m_frameAlloc = frameAlloc;
 	m_willDrawToDefaultFbo = willDrawToDefaultFbo;
 
 	Error err = initInternal(config);
@@ -95,7 +95,7 @@ Error Renderer::initInternal(const ConfigSet& config)
 		TextureInitInfo texinit;
 		texinit.m_width = texinit.m_height = 4;
 		texinit.m_usage = TextureUsageBit::SAMPLED_FRAGMENT;
-		texinit.m_format = PixelFormat(ComponentFormat::R8G8B8A8, TransformFormat::UNORM);
+		texinit.m_format = Format::R8G8B8A8_UNORM;
 		texinit.m_initialUsage = TextureUsageBit::SAMPLED_FRAGMENT;
 		TexturePtr tex = getGrManager().newTexture(texinit);
 
@@ -103,10 +103,8 @@ Error Renderer::initInternal(const ConfigSet& config)
 		m_dummyTexView = getGrManager().newTextureView(viewinit);
 	}
 
-	m_dummyBuff = getGrManager().newBuffer(BufferInitInfo(getDummyBufferSize(),
-		BufferUsageBit::UNIFORM_ALL | BufferUsageBit::STORAGE_ALL,
-		BufferMapAccessBit::NONE,
-		"Dummy"));
+	m_dummyBuff = getGrManager().newBuffer(BufferInitInfo(
+		1024, BufferUsageBit::UNIFORM_ALL | BufferUsageBit::STORAGE_ALL, BufferMapAccessBit::NONE, "Dummy"));
 
 	// Init the stages. Careful with the order!!!!!!!!!!
 	m_indirect.reset(m_alloc.newInstance<Indirect>(this));
@@ -114,6 +112,9 @@ Error Renderer::initInternal(const ConfigSet& config)
 
 	m_gbuffer.reset(m_alloc.newInstance<GBuffer>(this));
 	ANKI_CHECK(m_gbuffer->init(config));
+
+	m_gbufferPost.reset(m_alloc.newInstance<GBufferPost>(this));
+	ANKI_CHECK(m_gbufferPost->init(config));
 
 	m_shadowMapping.reset(m_alloc.newInstance<ShadowMapping>(this));
 	ANKI_CHECK(m_shadowMapping->init(config));
@@ -172,6 +173,10 @@ Error Renderer::initInternal(const ConfigSet& config)
 	sinit.m_mipmapFilter = SamplingFilter::LINEAR;
 	sinit.m_repeat = true;
 	m_trilinearRepeatSampler = m_gr->newSampler(sinit);
+
+	sinit.m_mipmapFilter = SamplingFilter::NEAREST;
+	sinit.m_minMagFilter = SamplingFilter::NEAREST;
+	m_nearesetNearestSampler = m_gr->newSampler(sinit);
 
 	initJitteredMats();
 
@@ -265,9 +270,10 @@ Error Renderer::populateRenderGraph(RenderingContext& ctx)
 	m_indirect->populateRenderGraph(ctx);
 	m_gbuffer->populateRenderGraph(ctx);
 	m_depth->populateRenderGraph(ctx);
-	m_refl->populateRenderGraph(ctx);
 	m_vol->populateRenderGraph(ctx);
 	m_ssao->populateRenderGraph(ctx);
+	m_gbufferPost->populateRenderGraph(ctx);
+	m_refl->populateRenderGraph(ctx);
 	m_lensFlare->populateRenderGraph(ctx);
 	m_forwardShading->populateRenderGraph(ctx);
 	m_lightShading->populateRenderGraph(ctx);
@@ -283,7 +289,9 @@ Error Renderer::populateRenderGraph(RenderingContext& ctx)
 
 	m_finalComposite->populateRenderGraph(ctx);
 
+	m_stats.m_lightBinTime = HighRezTimer::getCurrentTime();
 	ANKI_CHECK(m_lightShading->binLights(ctx));
+	m_stats.m_lightBinTime = HighRezTimer::getCurrentTime() - m_stats.m_lightBinTime;
 
 	return Error::NONE;
 }
@@ -313,8 +321,7 @@ Vec3 Renderer::unproject(
 	return out.xyz();
 }
 
-TextureInitInfo Renderer::create2DRenderTargetInitInfo(
-	U32 w, U32 h, const PixelFormat& format, TextureUsageBit usage, CString name)
+TextureInitInfo Renderer::create2DRenderTargetInitInfo(U32 w, U32 h, Format format, TextureUsageBit usage, CString name)
 {
 	ANKI_ASSERT(!!(usage & TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE));
 	TextureInitInfo init(name);
@@ -333,9 +340,8 @@ TextureInitInfo Renderer::create2DRenderTargetInitInfo(
 }
 
 RenderTargetDescription Renderer::create2DRenderTargetDescription(
-	U32 w, U32 h, const PixelFormat& format, TextureUsageBit usage, CString name)
+	U32 w, U32 h, Format format, TextureUsageBit usage, CString name)
 {
-	ANKI_ASSERT(!!(usage & TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE));
 	RenderTargetDescription init(name);
 
 	init.m_width = w;
@@ -381,15 +387,15 @@ TexturePtr Renderer::createAndClearRenderTarget(const TextureInitInfo& inf, cons
 				Array<TextureUsageBit, MAX_COLOR_ATTACHMENTS> colUsage = {};
 				TextureUsageBit dsUsage = TextureUsageBit::NONE;
 
-				if(componentFormatIsDepthStencil(inf.m_format.m_components))
+				if(formatIsDepthStencil(inf.m_format))
 				{
 					DepthStencilAspectBit aspect = DepthStencilAspectBit::NONE;
-					if(componentFormatIsDepth(inf.m_format.m_components))
+					if(formatIsDepth(inf.m_format))
 					{
 						aspect |= DepthStencilAspectBit::DEPTH;
 					}
 
-					if(componentFormatIsStencil(inf.m_format.m_components))
+					if(formatIsStencil(inf.m_format))
 					{
 						aspect |= DepthStencilAspectBit::STENCIL;
 					}

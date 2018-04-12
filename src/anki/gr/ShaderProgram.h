@@ -15,7 +15,7 @@ namespace anki
 /// @{
 
 /// ShaderProgram init info.
-class ShaderProgramInitInfo : GrBaseInitInfo
+class ShaderProgramInitInfo : public GrBaseInitInfo
 {
 public:
 	Array<ShaderPtr, U(ShaderType::COUNT)> m_shaders = {};
@@ -45,8 +45,8 @@ public:
 		if(m_shaders[ShaderType::COMPUTE])
 		{
 			invalid |= m_shaders[ShaderType::VERTEX] || m_shaders[ShaderType::TESSELLATION_CONTROL]
-				|| m_shaders[ShaderType::TESSELLATION_EVALUATION] || m_shaders[ShaderType::GEOMETRY]
-				|| m_shaders[ShaderType::FRAGMENT];
+					   || m_shaders[ShaderType::TESSELLATION_EVALUATION] || m_shaders[ShaderType::GEOMETRY]
+					   || m_shaders[ShaderType::FRAGMENT];
 		}
 		else
 		{
@@ -72,8 +72,8 @@ public:
 
 protected:
 	/// Construct.
-	ShaderProgram(GrManager* manager)
-		: GrObject(manager, CLASS_TYPE)
+	ShaderProgram(GrManager* manager, CString name)
+		: GrObject(manager, CLASS_TYPE, name)
 	{
 	}
 

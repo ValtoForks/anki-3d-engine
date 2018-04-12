@@ -8,7 +8,6 @@
 #include <anki/scene/Common.h>
 #include <anki/scene/SceneNode.h>
 #include <anki/scene/Visibility.h>
-#include <anki/core/Timestamp.h>
 #include <anki/Math.h>
 #include <anki/util/Singleton.h>
 #include <anki/util/HighRezTimer.h>
@@ -32,6 +31,14 @@ class UpdateSceneNodesCtx;
 /// @addtogroup scene
 /// @{
 
+/// SceneGraph statistics.
+class SceneGraphStats
+{
+public:
+	Second m_updateTime ANKI_DBG_NULLIFY;
+	Second m_visibilityTestsTime ANKI_DBG_NULLIFY;
+};
+
 /// The scene graph that  all the scene entities
 class SceneGraph
 {
@@ -48,8 +55,8 @@ public:
 		ThreadPool* threadpool,
 		ThreadHive* thraedHive,
 		ResourceManager* resources,
-		StagingGpuMemoryManager* stagingAlloc,
 		Input* input,
+		ScriptManager* scriptManager,
 		const Timestamp* globalTimestamp,
 		const ConfigSet& config);
 
@@ -113,13 +120,6 @@ public:
 		return *m_threadHive;
 	}
 
-	// TODO remove that from here
-	StagingGpuMemoryManager& getStagingGpuMemoryManager()
-	{
-		ANKI_ASSERT(m_stagingAlloc);
-		return *m_stagingAlloc;
-	}
-
 	ANKI_USE_RESULT Error update(Second prevUpdateTime, Second crntTime);
 
 	void doVisibilityTests(RenderQueue& rqueue);
@@ -162,6 +162,11 @@ public:
 		m_objectsMarkedForDeletionCount.fetchAdd(1);
 	}
 
+	const SceneGraphStats& getStats() const
+	{
+		return m_stats;
+	}
+
 anki_internal:
 	ResourceManager& getResourceManager()
 	{
@@ -176,6 +181,12 @@ anki_internal:
 	PhysicsWorld& getPhysicsWorld()
 	{
 		return *m_physics;
+	}
+
+	ScriptManager& getScriptManager()
+	{
+		ANKI_ASSERT(m_scriptManager);
+		return *m_scriptManager;
 	}
 
 	const PhysicsWorld& getPhysicsWorld() const
@@ -227,7 +238,7 @@ private:
 	GrManager* m_gr = nullptr;
 	PhysicsWorld* m_physics = nullptr;
 	Input* m_input = nullptr;
-	StagingGpuMemoryManager* m_stagingAlloc = nullptr;
+	ScriptManager* m_scriptManager = nullptr;
 
 	SceneAllocator<U8> m_alloc;
 	SceneFrameAllocator<U8> m_frameAlloc;
@@ -252,6 +263,8 @@ private:
 	SceneComponentLists m_componentLists;
 
 	F32 m_earlyZDist = -1.0;
+
+	SceneGraphStats m_stats;
 
 	/// Put a node in the appropriate containers
 	ANKI_USE_RESULT Error registerNode(SceneNode* node);

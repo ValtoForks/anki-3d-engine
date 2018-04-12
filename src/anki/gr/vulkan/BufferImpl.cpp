@@ -76,7 +76,7 @@ Error BufferImpl::init(const BufferInitInfo& inf)
 		// Fallback: just host
 		if(memIdx == MAX_U32)
 		{
-			ANKI_VK_LOGW("Vulkan: Using a fallback mode for write-only buffer");
+			ANKI_VK_LOGW("Using a fallback mode for write-only buffer");
 			memIdx = getGrManagerImpl().getGpuMemoryManager().findMemoryType(
 				req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0);
 		}
@@ -101,7 +101,7 @@ Error BufferImpl::init(const BufferInitInfo& inf)
 		// Fallback: Just host
 		if(memIdx == MAX_U32)
 		{
-			ANKI_VK_LOGW("Vulkan: Using a fallback mode for read/write buffer");
+			ANKI_VK_LOGW("Using a fallback mode for read/write buffer");
 			memIdx = getGrManagerImpl().getGpuMemoryManager().findMemoryType(
 				req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, 0);
 		}
@@ -138,7 +138,8 @@ Error BufferImpl::init(const BufferInitInfo& inf)
 	ANKI_TRACE_STOP_EVENT(VK_BIND_OBJECT);
 
 	m_access = access;
-	m_size = size;
+	m_size = inf.m_size;
+	m_actualSize = size;
 	m_usage = usage;
 	return Error::NONE;
 }
@@ -172,8 +173,9 @@ VkPipelineStageFlags BufferImpl::computePplineStage(BufferUsageBit usage)
 		stageMask |= VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 	}
 
-	if(!!(usage & (BufferUsageBit::UNIFORM_TESSELLATION_EVALUATION
-					  | BufferUsageBit::STORAGE_TESSELLATION_EVALUATION_READ_WRITE)))
+	if(!!(usage
+		   & (BufferUsageBit::UNIFORM_TESSELLATION_EVALUATION
+				 | BufferUsageBit::STORAGE_TESSELLATION_EVALUATION_READ_WRITE)))
 	{
 		stageMask |= VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
 	}
@@ -202,8 +204,8 @@ VkPipelineStageFlags BufferImpl::computePplineStage(BufferUsageBit usage)
 	if(!!(usage & (BufferUsageBit::INDEX | BufferUsageBit::VERTEX)))
 	{
 		stageMask |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_VERTEX_SHADER_BIT
-			| VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT | VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT
-			| VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+					 | VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT
+					 | VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT | VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
 	}
 
 	if(!!(usage & BufferUsageBit::INDIRECT))
@@ -234,15 +236,15 @@ VkAccessFlags BufferImpl::computeAccessMask(BufferUsageBit usage)
 {
 	VkAccessFlags mask = 0;
 
-	const BufferUsageBit SHADER_READ = BufferUsageBit::STORAGE_VERTEX_READ
-		| BufferUsageBit::STORAGE_TESSELLATION_CONTROL_READ | BufferUsageBit::STORAGE_TESSELLATION_EVALUATION_READ
-		| BufferUsageBit::STORAGE_GEOMETRY_READ | BufferUsageBit::STORAGE_FRAGMENT_READ
-		| BufferUsageBit::STORAGE_COMPUTE_READ;
+	const BufferUsageBit SHADER_READ =
+		BufferUsageBit::STORAGE_VERTEX_READ | BufferUsageBit::STORAGE_TESSELLATION_CONTROL_READ
+		| BufferUsageBit::STORAGE_TESSELLATION_EVALUATION_READ | BufferUsageBit::STORAGE_GEOMETRY_READ
+		| BufferUsageBit::STORAGE_FRAGMENT_READ | BufferUsageBit::STORAGE_COMPUTE_READ;
 
-	const BufferUsageBit SHADER_WRITE = BufferUsageBit::STORAGE_VERTEX_WRITE
-		| BufferUsageBit::STORAGE_TESSELLATION_CONTROL_WRITE | BufferUsageBit::STORAGE_TESSELLATION_EVALUATION_WRITE
-		| BufferUsageBit::STORAGE_GEOMETRY_WRITE | BufferUsageBit::STORAGE_FRAGMENT_WRITE
-		| BufferUsageBit::STORAGE_COMPUTE_WRITE;
+	const BufferUsageBit SHADER_WRITE =
+		BufferUsageBit::STORAGE_VERTEX_WRITE | BufferUsageBit::STORAGE_TESSELLATION_CONTROL_WRITE
+		| BufferUsageBit::STORAGE_TESSELLATION_EVALUATION_WRITE | BufferUsageBit::STORAGE_GEOMETRY_WRITE
+		| BufferUsageBit::STORAGE_FRAGMENT_WRITE | BufferUsageBit::STORAGE_COMPUTE_WRITE;
 
 	if(!!(usage & BufferUsageBit::UNIFORM_ALL))
 	{

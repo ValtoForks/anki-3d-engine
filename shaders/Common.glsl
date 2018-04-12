@@ -10,18 +10,18 @@
 
 // WORKAROUND
 #if defined(ANKI_VENDOR_NVIDIA)
-#define NVIDIA_LINK_ERROR_WORKAROUND 1
+#	define NVIDIA_LINK_ERROR_WORKAROUND 1
 #else
-#define NVIDIA_LINK_ERROR_WORKAROUND 0
+#	define NVIDIA_LINK_ERROR_WORKAROUND 0
 #endif
 
 // Default precision
 #ifndef DEFAULT_FLOAT_PRECISION
-#define DEFAULT_FLOAT_PRECISION highp
+#	define DEFAULT_FLOAT_PRECISION highp
 #endif
 
 #ifndef DEFAULT_INT_PRECISION
-#define DEFAULT_INT_PRECISION highp
+#	define DEFAULT_INT_PRECISION highp
 #endif
 
 // Constants
@@ -44,10 +44,13 @@ const uint UBO_MAX_SIZE = 16384u;
 // Common locations
 #define POSITION_LOCATION 0
 #define TEXTURE_COORDINATE_LOCATION 1
-#define NORMAL_LOCATION 2
-#define TANGENT_LOCATION 3
-#define BONE_WEIGHTS_LOCATION 4
-#define BONE_INDICES_LOCATION 5
+#define TEXTURE_COORDINATE_LOCATION_2 2
+#define NORMAL_LOCATION 3
+#define TANGENT_LOCATION 4
+#define COLOR_LOCATION 5
+#define BONE_WEIGHTS_LOCATION 6
+#define BONE_INDICES_LOCATION 7
+
 #define SCALE_LOCATION 1
 #define ALPHA_LOCATION 2
 
@@ -58,7 +61,7 @@ const uint UBO_MAX_SIZE = 16384u;
 
 // Other
 #if !defined(ANKI_ARB_SHADER_BALLOT)
-#define readFirstInvocationARB(x_) (x_)
+#	define readFirstInvocationARB(x_) (x_)
 #endif
 
 #define CALC_BITANGENT_IN_VERT 1

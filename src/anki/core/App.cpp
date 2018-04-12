@@ -26,7 +26,7 @@
 #include <anki/ui/UiManager.h>
 
 #if ANKI_OS == ANKI_OS_ANDROID
-#include <android_native_app_glue.h>
+#	include <android_native_app_glue.h>
 #endif
 
 namespace anki
@@ -36,6 +36,209 @@ namespace anki
 /// The one and only android hack
 android_app* gAndroidApp = nullptr;
 #endif
+
+class App::StatsUi : public UiImmediateModeBuilder
+{
+public:
+	template<typename T>
+	class BufferedValue
+	{
+	public:
+		void set(T x)
+		{
+			m_total += x;
+			++m_count;
+		}
+
+		F64 get(Bool flush)
+		{
+			if(flush)
+			{
+				m_avg = F64(m_total) / m_count;
+				m_count = 0;
+				m_total = 0.0;
+			}
+
+			return m_avg;
+		}
+
+	private:
+		T m_total = T(0);
+		F64 m_avg = 0.0;
+		U32 m_count = 0;
+	};
+
+	BufferedValue<Second> m_frameTime;
+	BufferedValue<Second> m_renderTime;
+	BufferedValue<Second> m_lightBinTime;
+	BufferedValue<Second> m_sceneUpdateTime;
+	BufferedValue<Second> m_visTestsTime;
+
+	PtrSize m_allocatedCpuMem = 0;
+	U64 m_allocCount = 0;
+	U64 m_freeCount = 0;
+
+	U64 m_vkCpuMem = 0;
+	U64 m_vkGpuMem = 0;
+
+	static const U32 BUFFERED_FRAMES = 16;
+	U32 m_bufferedFrames = 0;
+
+	StatsUi(UiManager* ui)
+		: UiImmediateModeBuilder(ui)
+	{
+	}
+
+	void build(CanvasPtr canvas)
+	{
+		// Misc
+		++m_bufferedFrames;
+		Bool flush = false;
+		if(m_bufferedFrames == BUFFERED_FRAMES)
+		{
+			flush = true;
+			m_bufferedFrames = 0;
+		}
+
+		// Start drawing the UI
+		nk_context* ctx = &canvas->getNkContext();
+
+		canvas->pushFont(canvas->getDefaultFont(), 16);
+
+		nk_style_push_style_item(ctx, &ctx->style.window.fixed_background, nk_style_item_color(nk_rgba(0, 0, 0, 128)));
+
+		if(nk_begin(ctx, "Stats", nk_rect(5, 5, 230, 290), 0))
+		{
+			nk_layout_row_dynamic(ctx, 17, 1);
+
+			nk_label(ctx, "Time:", NK_TEXT_ALIGN_LEFT);
+			labelTime(ctx, m_frameTime.get(flush), "Total frame");
+			labelTime(ctx, m_renderTime.get(flush) - m_lightBinTime.get(flush), "Renderer");
+			labelTime(ctx, m_lightBinTime.get(false), "Light bin");
+			labelTime(ctx, m_sceneUpdateTime.get(flush), "Scene update");
+			labelTime(ctx, m_visTestsTime.get(flush), "Visibility");
+
+			nk_label(ctx, " ", NK_TEXT_ALIGN_LEFT);
+			nk_label(ctx, "Memory:", NK_TEXT_ALIGN_LEFT);
+			labelBytes(ctx, m_allocatedCpuMem, "Total CPU");
+			labelUint(ctx, m_allocCount, "Total allocations");
+			labelUint(ctx, m_freeCount, "Total frees");
+			labelBytes(ctx, m_vkCpuMem, "Vulkan CPU");
+			labelBytes(ctx, m_vkGpuMem, "Vulkan GPU");
+		}
+
+		nk_style_pop_style_item(ctx);
+		nk_end(ctx);
+		canvas->popFont();
+	}
+
+	void labelTime(nk_context* ctx, Second val, CString name)
+	{
+		StringAuto timestamp(getAllocator());
+		timestamp.sprintf("%s: %fms", name.cstr(), val * 1000.0);
+		nk_label(ctx, timestamp.cstr(), NK_TEXT_ALIGN_LEFT);
+	}
+
+	void labelBytes(nk_context* ctx, PtrSize val, CString name)
+	{
+		U gb, mb, kb, b;
+
+		gb = val / 1_GB;
+		val -= gb * 1_GB;
+
+		mb = val / 1_MB;
+		val -= mb * 1_MB;
+
+		kb = val / 1_KB;
+		val -= kb * 1_KB;
+
+		b = val;
+
+		StringAuto timestamp(getAllocator());
+		if(gb)
+		{
+			timestamp.sprintf("%s: %4u,%04u,%04u,%04u", name.cstr(), gb, mb, kb, b);
+		}
+		else if(mb)
+		{
+			timestamp.sprintf("%s: %4u,%04u,%04u", name.cstr(), mb, kb, b);
+		}
+		else if(kb)
+		{
+			timestamp.sprintf("%s: %4u,%04u", name.cstr(), kb, b);
+		}
+		else
+		{
+			timestamp.sprintf("%s: %4u", name.cstr(), b);
+		}
+		nk_label(ctx, timestamp.cstr(), NK_TEXT_ALIGN_LEFT);
+	}
+
+	void labelUint(nk_context* ctx, U64 val, CString name)
+	{
+		StringAuto timestamp(getAllocator());
+		timestamp.sprintf("%s: %llu", name.cstr(), val);
+		nk_label(ctx, timestamp.cstr(), NK_TEXT_ALIGN_LEFT);
+	}
+};
+
+void* App::MemStats::allocCallback(void* userData, void* ptr, PtrSize size, PtrSize alignment)
+{
+	ANKI_ASSERT(userData);
+
+	static const PtrSize MAX_ALIGNMENT = 64;
+
+	struct alignas(MAX_ALIGNMENT) Header
+	{
+		PtrSize m_allocatedSize;
+		Array<U8, MAX_ALIGNMENT - sizeof(PtrSize)> _m_padding;
+	};
+	static_assert(sizeof(Header) == MAX_ALIGNMENT, "See file");
+	static_assert(alignof(Header) == MAX_ALIGNMENT, "See file");
+
+	void* out = nullptr;
+
+	if(ptr == nullptr)
+	{
+		// Need to allocate
+		ANKI_ASSERT(size > 0);
+		ANKI_ASSERT(alignment > 0 && alignment <= MAX_ALIGNMENT);
+
+		const PtrSize newAlignment = MAX_ALIGNMENT;
+		const PtrSize newSize = sizeof(Header) + size;
+
+		// Allocate
+		MemStats* self = static_cast<MemStats*>(userData);
+		Header* allocation = static_cast<Header*>(
+			self->m_originalAllocCallback(self->m_originalUserData, nullptr, newSize, newAlignment));
+		allocation->m_allocatedSize = size;
+		++allocation;
+		out = static_cast<void*>(allocation);
+
+		// Update stats
+		self->m_allocatedMem.fetchAdd(size);
+		self->m_allocCount.fetchAdd(1);
+	}
+	else
+	{
+		// Need to free
+
+		MemStats* self = static_cast<MemStats*>(userData);
+
+		Header* allocation = static_cast<Header*>(ptr);
+		--allocation;
+		ANKI_ASSERT(allocation->m_allocatedSize > 0);
+
+		// Update stats
+		self->m_freeCount.fetchAdd(1);
+		self->m_allocatedMem.fetchSub(allocation->m_allocatedSize);
+
+		// Free
+		self->m_originalAllocCallback(self->m_originalUserData, allocation, 0, 0);
+	}
+
+	return out;
+}
 
 App::App()
 {
@@ -68,6 +271,8 @@ void App::cleanup()
 
 	if(m_ui)
 	{
+		m_statsUi.reset(nullptr);
+
 		m_heapAlloc.deleteInstance(m_ui);
 		m_ui = nullptr;
 	}
@@ -148,10 +353,11 @@ Error App::init(const ConfigSet& config, AllocAlignedCallback allocCb, void* all
 
 Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, void* allocCbUserData)
 {
-	m_allocCb = allocCb;
-	m_allocCbData = allocCbUserData;
-	m_heapAlloc = HeapAllocator<U8>(allocCb, allocCbUserData);
 	ConfigSet config = config_;
+	m_displayStats = config.getNumber("core.displayStats");
+
+	initMemoryCallbacks(allocCb, allocCbUserData);
+	m_heapAlloc = HeapAllocator<U8>(m_allocCb, m_allocCbData);
 
 	ANKI_CHECK(initDirs(config));
 
@@ -220,7 +426,6 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 	// Input
 	//
 	m_input = m_heapAlloc.newInstance<Input>();
-
 	ANKI_CHECK(m_input->init(m_window));
 
 	//
@@ -279,7 +484,9 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 	// UI
 	//
 	m_ui = m_heapAlloc.newInstance<UiManager>();
-	ANKI_CHECK(m_ui->init(m_heapAlloc, m_resources, m_gr, m_stagingMem, m_input));
+	ANKI_CHECK(m_ui->init(m_allocCb, m_allocCbData, m_resources, m_gr, m_stagingMem, m_input));
+
+	ANKI_CHECK(m_ui->newInstance<StatsUi>(m_statsUi));
 
 	//
 	// Renderer
@@ -296,6 +503,12 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 		m_threadpool, m_resources, m_gr, m_stagingMem, m_ui, m_allocCb, m_allocCbData, config, &m_globalTimestamp));
 
 	//
+	// Script
+	//
+	m_script = m_heapAlloc.newInstance<ScriptManager>();
+	ANKI_CHECK(m_script->init(m_allocCb, m_allocCbData));
+
+	//
 	// Scene
 	//
 	m_scene = m_heapAlloc.newInstance<SceneGraph>();
@@ -305,17 +518,14 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 		m_threadpool,
 		m_threadHive,
 		m_resources,
-		m_stagingMem,
 		m_input,
+		m_script,
 		&m_globalTimestamp,
 		config));
 
-	//
-	// Script
-	//
-	m_script = m_heapAlloc.newInstance<ScriptManager>();
-
-	ANKI_CHECK(m_script->init(m_allocCb, m_allocCbData, m_scene, m_renderer));
+	// Inform the script engine about some subsystems
+	m_script->setRenderer(m_renderer);
+	m_script->setSceneGraph(m_scene);
 
 	ANKI_CORE_LOGI("Application initialized");
 	return Error::NONE;
@@ -392,8 +602,7 @@ Error App::mainLoop()
 	while(!quit)
 	{
 		ANKI_TRACE_START_FRAME();
-		HighRezTimer timer;
-		timer.start();
+		const Second startTime = HighRezTimer::getCurrentTime();
 
 		prevUpdateTime = crntTime;
 		crntTime = HighRezTimer::getCurrentTime();
@@ -411,6 +620,11 @@ Error App::mainLoop()
 		RenderQueue rqueue;
 		m_scene->doVisibilityTests(rqueue);
 
+		// Inject stats UI
+		DynamicArrayAuto<UiQueueElement> newUiElementArr(m_heapAlloc);
+		injectStatsUiElement(newUiElementArr, rqueue);
+
+		// Render
 		ANKI_CHECK(m_renderer->render(rqueue));
 
 		// Pause and sync async loader. That will force all tasks before the pause to finish in this frame.
@@ -428,11 +642,30 @@ Error App::mainLoop()
 		m_resources->getAsyncLoader().resume();
 
 		// Sleep
-		timer.stop();
-		if(timer.getElapsedTime() < m_timerTick)
+		const Second endTime = HighRezTimer::getCurrentTime();
+		const Second frameTime = endTime - startTime;
+		if(frameTime < m_timerTick)
 		{
 			ANKI_TRACE_SCOPED_EVENT(TIMER_TICK_SLEEP);
-			HighRezTimer::sleep(m_timerTick - timer.getElapsedTime());
+			HighRezTimer::sleep(m_timerTick - frameTime);
+		}
+
+		// Stats
+		if(m_displayStats)
+		{
+			StatsUi& statsUi = static_cast<StatsUi&>(*m_statsUi);
+			statsUi.m_frameTime.set(frameTime);
+			statsUi.m_renderTime.set(m_renderer->getStats().m_renderingTime);
+			statsUi.m_lightBinTime.set(m_renderer->getStats().m_lightBinTime);
+			statsUi.m_sceneUpdateTime.set(m_scene->getStats().m_updateTime);
+			statsUi.m_visTestsTime.set(m_scene->getStats().m_visibilityTestsTime);
+			statsUi.m_allocatedCpuMem = m_memStats.m_allocatedMem.load();
+			statsUi.m_allocCount = m_memStats.m_allocCount.load();
+			statsUi.m_freeCount = m_memStats.m_freeCount.load();
+
+			GrManagerStats grStats = m_gr->getStats();
+			statsUi.m_vkCpuMem = grStats.m_cpuMemory;
+			statsUi.m_vkGpuMem = grStats.m_gpuMemory;
 		}
 
 		++m_globalTimestamp;
@@ -441,6 +674,44 @@ Error App::mainLoop()
 	}
 
 	return Error::NONE;
+}
+
+void App::injectStatsUiElement(DynamicArrayAuto<UiQueueElement>& newUiElementArr, RenderQueue& rqueue)
+{
+	if(m_displayStats)
+	{
+		U count = rqueue.m_uis.getSize();
+		newUiElementArr.create(count + 1u);
+
+		if(count)
+		{
+			memcpy(&newUiElementArr[0], &rqueue.m_uis[0], rqueue.m_uis.getSizeInBytes());
+		}
+
+		newUiElementArr[count].m_userData = m_statsUi.get();
+		newUiElementArr[count].m_drawCallback = [](CanvasPtr& canvas, void* userData) -> void {
+			static_cast<StatsUi*>(userData)->build(canvas);
+		};
+
+		rqueue.m_uis = newUiElementArr;
+	}
+}
+
+void App::initMemoryCallbacks(AllocAlignedCallback allocCb, void* allocCbUserData)
+{
+	if(m_displayStats)
+	{
+		m_memStats.m_originalAllocCallback = allocCb;
+		m_memStats.m_originalUserData = allocCbUserData;
+
+		m_allocCb = MemStats::allocCallback;
+		m_allocCbData = &m_memStats;
+	}
+	else
+	{
+		m_allocCb = allocCb;
+		m_allocCbData = allocCbUserData;
+	}
 }
 
 } // end namespace anki

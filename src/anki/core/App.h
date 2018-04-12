@@ -9,9 +9,9 @@
 #include <anki/util/Allocator.h>
 #include <anki/util/String.h>
 #include <anki/util/Ptr.h>
-#include <anki/core/Timestamp.h>
+#include <anki/ui/UiImmediateModeBuilder.h>
 #if ANKI_OS == ANKI_OS_ANDROID
-#include <android_native_app_glue.h>
+#	include <android_native_app_glue.h>
 #endif
 
 namespace anki
@@ -36,6 +36,8 @@ class ResourceManager;
 class ResourceFilesystem;
 class StagingGpuMemoryManager;
 class UiManager;
+class UiQueueElement;
+class RenderQueue;
 
 /// The core class of the engine.
 class App
@@ -141,7 +143,19 @@ public:
 		return m_heapAlloc;
 	}
 
+	void setDisplayStats(Bool enable)
+	{
+		m_displayStats = enable;
+	}
+
+	Bool getDisplayStats() const
+	{
+		return m_displayStats;
+	}
+
 private:
+	class StatsUi;
+
 	// Allocation
 	AllocAlignedCallback m_allocCb;
 	void* m_allocCbData;
@@ -161,6 +175,8 @@ private:
 	ScriptManager* m_script = nullptr;
 
 	// Misc
+	UiImmediateModeBuilderPtr m_statsUi;
+	Bool8 m_displayStats = false;
 	Timestamp m_globalTimestamp = 1;
 	ThreadPool* m_threadpool = nullptr;
 	ThreadHive* m_threadHive = nullptr;
@@ -169,10 +185,28 @@ private:
 	Second m_timerTick;
 	U64 m_resourceCompletedAsyncTaskCount = 0;
 
+	class MemStats
+	{
+	public:
+		Atomic<PtrSize> m_allocatedMem = {0};
+		Atomic<U64> m_allocCount = {0};
+		Atomic<U64> m_freeCount = {0};
+
+		void* m_originalUserData = nullptr;
+		AllocAlignedCallback m_originalAllocCallback = nullptr;
+
+		static void* allocCallback(void* userData, void* ptr, PtrSize size, PtrSize alignment);
+	} m_memStats;
+
+	void initMemoryCallbacks(AllocAlignedCallback allocCb, void* allocCbUserData);
+
 	ANKI_USE_RESULT Error initInternal(const ConfigSet& config, AllocAlignedCallback allocCb, void* allocCbUserData);
 
 	ANKI_USE_RESULT Error initDirs(const ConfigSet& cfg);
 	void cleanup();
+
+	/// Inject a new UI element in the render queue for displaying stats.
+	void injectStatsUiElement(DynamicArrayAuto<UiQueueElement>& elements, RenderQueue& rqueue);
 };
 
 } // end namespace anki

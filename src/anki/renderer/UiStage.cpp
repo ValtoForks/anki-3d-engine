@@ -23,8 +23,8 @@ UiStage::~UiStage()
 
 Error UiStage::init(const ConfigSet&)
 {
-	ANKI_CHECK(
-		m_r->getUiManager().newInstance(m_font, "engine_data/UbuntuRegular.ttf", std::initializer_list<U32>{12}));
+	ANKI_CHECK(m_r->getUiManager().newInstance(
+		m_font, "engine_data/UbuntuRegular.ttf", std::initializer_list<U32>{12, 16, 20}));
 	ANKI_CHECK(m_r->getUiManager().newInstance(m_canvas, m_font, 12, m_r->getWidth(), m_r->getHeight()));
 
 	return Error::NONE;
@@ -48,6 +48,11 @@ void UiStage::draw(RenderingContext& ctx, CommandBufferPtr& cmdb)
 
 	m_canvas->endBuilding();
 	m_canvas->appendToCommandBuffer(cmdb);
+
+	// UI messes with the state, restore it
+	cmdb->setBlendFactors(0, BlendFactor::ONE, BlendFactor::ZERO);
+	cmdb->setBlendOperation(0, BlendOperation::ADD);
+	cmdb->setCullMode(FaceSelectionBit::BACK);
 }
 
 } // end namespace anki

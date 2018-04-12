@@ -473,14 +473,6 @@ void Exporter::exportLight(const aiLight& light)
 	aiVector3D linear(light.mColorDiffuse[0], light.mColorDiffuse[1], light.mColorDiffuse[2]);
 	file << "lcomp:setDiffuseColor(Vec4.new(" << linear[0] << ", " << linear[1] << ", " << linear[2] << ", 1))\n";
 
-	// linear = computeLightColor(light.mColorSpecular);
-	if(light.mProperties.find("specular_color") != light.mProperties.end())
-	{
-		stringToFloatArray<3>(light.mProperties.at("specular_color"), linear);
-	}
-
-	file << "lcomp:setSpecularColor(Vec4.new(" << linear[0] << ", " << linear[1] << ", " << linear[2] << ", 1))\n";
-
 	// Geometry
 	aiVector3D direction(0.0, 0.0, 1.0);
 
@@ -710,7 +702,7 @@ void Exporter::exportCamera(const aiCamera& cam)
 	// Write the main node
 	file << "\nnode = scene:newPerspectiveCameraNode(\"" << cam.mName.C_Str() << "\")\n";
 
-	file << "scene:setActiveCamera(node:getSceneNodeBase())\n";
+	file << "scene:setActiveCameraNode(node:getSceneNodeBase())\n";
 
 	file << "node:setAll(" << cam.mHorizontalFOV << ", "
 		 << "1.0 / getMainRenderer():getAspectRatio() * " << cam.mHorizontalFOV << ", " << cam.mClipPlaneNear << ", "
@@ -737,11 +729,11 @@ void Exporter::load()
 	m_importer.SetPropertyFloat(AI_CONFIG_PP_CT_MAX_SMOOTHING_ANGLE, smoothAngle);
 
 	unsigned flags = 0
-		//| aiProcess_FindInstances
-		| aiProcess_JoinIdenticalVertices
-		//| aiProcess_SortByPType
-		| aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes | aiProcess_RemoveRedundantMaterials
-		| aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals;
+					 //| aiProcess_FindInstances
+					 | aiProcess_JoinIdenticalVertices
+					 //| aiProcess_SortByPType
+					 | aiProcess_ImproveCacheLocality | aiProcess_OptimizeMeshes | aiProcess_RemoveRedundantMaterials
+					 | aiProcess_CalcTangentSpace | aiProcess_GenSmoothNormals;
 
 	const aiScene* scene = m_importer.ReadFile(m_inputFilename, flags | aiProcess_Triangulate);
 
@@ -895,11 +887,11 @@ void Exporter::visitNode(const aiNode* ainode)
 					}
 					else if(pr.first == "decal_normal_roughness_atlas")
 					{
-						decal.m_normalRoughnessAtlasFilename = pr.second;
+						decal.m_specularRoughnessAtlasFilename = pr.second;
 					}
 					else if(pr.first == "decal_normal_roughness_sub_texture")
 					{
-						decal.m_normalRoughnessSubTextureName = pr.second;
+						decal.m_specularRoughnessSubTextureName = pr.second;
 					}
 					else if(pr.first == "decal_normal_roughness_factor")
 					{
@@ -1116,10 +1108,10 @@ void Exporter::exportAll()
 			 << decal.m_diffuseSubTextureName << "\", " << decal.m_factors[0] << ")\n";
 		file << "decalc:updateShape(" << decal.m_size.x << ", " << decal.m_size.y << ", " << decal.m_size.z << ")\n";
 
-		if(!decal.m_normalRoughnessAtlasFilename.empty())
+		if(!decal.m_specularRoughnessAtlasFilename.empty())
 		{
-			file << "decalc:setNormalRoughnessDecal(\"" << decal.m_normalRoughnessAtlasFilename << "\", \""
-				 << decal.m_normalRoughnessSubTextureName << "\", " << decal.m_factors[1] << ")\n";
+			file << "decalc:setSpecularRoughnessDecal(\"" << decal.m_specularRoughnessAtlasFilename << "\", \""
+				 << decal.m_specularRoughnessSubTextureName << "\", " << decal.m_factors[1] << ")\n";
 		}
 
 		++i;
