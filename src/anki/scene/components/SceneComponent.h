@@ -8,7 +8,6 @@
 #include <anki/scene/Common.h>
 #include <anki/util/Functions.h>
 #include <anki/util/BitMask.h>
-#include <anki/util/List.h>
 
 namespace anki
 {
@@ -27,14 +26,14 @@ enum class SceneComponentType : U16
 	LIGHT,
 	LENS_FLARE,
 	BODY,
-	SECTOR,
-	PORTAL,
 	REFLECTION_PROBE,
-	REFLECTION_PROXY,
 	OCCLUDER,
 	DECAL,
 	SKIN,
 	SCRIPT,
+	JOINT,
+	TRIGGER,
+	FOG_DENSITY,
 	PLAYER_CONTROLLER,
 
 	COUNT,
@@ -42,13 +41,18 @@ enum class SceneComponentType : U16
 };
 
 /// Scene node component
-class SceneComponent : public IntrusiveListEnabled<SceneComponent>
+class SceneComponent
 {
 public:
 	/// Construct the scene component.
-	SceneComponent(SceneComponentType type, SceneNode* node);
+	SceneComponent(SceneComponentType type)
+		: m_type(type)
+	{
+	}
 
-	virtual ~SceneComponent();
+	virtual ~SceneComponent()
+	{
+	}
 
 	SceneComponentType getType() const
 	{
@@ -60,10 +64,8 @@ public:
 		return m_timestamp;
 	}
 
-	Timestamp getGlobalTimestamp() const;
-
 	/// Do some updating
-	/// @param[in,out] node Scene node of this component.
+	/// @param node The owner node of this component.
 	/// @param prevTime Previous update time.
 	/// @param crntTime Current update time.
 	/// @param[out] updated true if an update happened.
@@ -73,85 +75,20 @@ public:
 		return Error::NONE;
 	}
 
-	/// Called if SceneComponent::update returned true.
-	virtual ANKI_USE_RESULT Error onUpdate(SceneNode& node, Second prevTime, Second crntTime)
-	{
-		return Error::NONE;
-	}
-
 	/// Called only by the SceneGraph
 	ANKI_USE_RESULT Error updateReal(SceneNode& node, Second prevTime, Second crntTime, Bool& updated);
 
-	U64 getUuid() const
+	/// Don't call it.
+	void setTimestamp(Timestamp timestamp)
 	{
-		return m_uuid;
+		ANKI_ASSERT(timestamp > 0);
+		ANKI_ASSERT(timestamp >= m_timestamp);
+		m_timestamp = timestamp;
 	}
 
-	SceneNode& getSceneNode()
-	{
-		return *m_node;
-	}
-
-	const SceneNode& getSceneNode() const
-	{
-		return *m_node;
-	}
-
-	/// The position in the owner SceneNode.
-	U getIndex() const
-	{
-		return m_idx;
-	}
-
-	SceneAllocator<U8> getAllocator() const;
-
-	SceneFrameAllocator<U8> getFrameAllocator() const;
-
-	SceneGraph& getSceneGraph();
-
-	const SceneGraph& getSceneGraph() const;
-
-protected:
-	SceneNode* m_node = nullptr;
+private:
 	Timestamp m_timestamp = 1; ///< Indicates when an update happened
-
-private:
 	SceneComponentType m_type;
-	U64 m_uuid;
-	U32 m_idx;
-};
-
-/// Multiple lists of all types of components.
-class SceneComponentLists : public NonCopyable
-{
-anki_internal:
-	SceneComponentLists()
-	{
-	}
-
-	~SceneComponentLists()
-	{
-	}
-
-	void insertNew(SceneComponent* comp);
-
-	void remove(SceneComponent* comp);
-
-	template<typename TSceneComponentType, typename Func>
-	void iterateComponents(Func func)
-	{
-		auto it = m_lists[TSceneComponentType::CLASS_TYPE].getBegin();
-		auto end = m_lists[TSceneComponentType::CLASS_TYPE].getEnd();
-
-		while(it != end)
-		{
-			func(static_cast<TSceneComponentType&>(*it));
-			++it;
-		}
-	}
-
-private:
-	Array<IntrusiveList<SceneComponent>, U(SceneComponentType::COUNT)> m_lists;
 };
 /// @}
 

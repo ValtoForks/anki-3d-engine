@@ -81,6 +81,11 @@ public:
 		return m_idx == b.m_idx;
 	}
 
+	bool operator!=(const RenderPassBufferHandle& b) const
+	{
+		return m_idx != b.m_idx;
+	}
+
 private:
 	U32 m_idx = MAX_U32;
 
@@ -108,6 +113,8 @@ public:
 	/// Create an internal hash.
 	void bake()
 	{
+		ANKI_ASSERT(m_hash == 0);
+		ANKI_ASSERT(m_usage == TextureUsageBit::NONE && "No need to supply the usage. RenderGraph will find out");
 		m_hash = computeHash();
 	}
 
@@ -257,13 +264,14 @@ private:
 class RenderPassDescriptionBase
 {
 	friend class RenderGraph;
+	friend class RenderGraphDescription;
 
 public:
 	virtual ~RenderPassDescriptionBase()
 	{
 		m_name.destroy(m_alloc); // To avoid the assertion
-		m_consumers.destroy(m_alloc);
-		m_producers.destroy(m_alloc);
+		m_rtDeps.destroy(m_alloc);
+		m_buffDeps.destroy(m_alloc);
 	}
 
 	void setWork(RenderPassWorkCallback callback, void* userData, U32 secondLeveCmdbCount)
@@ -275,11 +283,8 @@ public:
 		m_secondLevelCmdbsCount = secondLeveCmdbCount;
 	}
 
-	/// Add new consumer dependency.
-	void newConsumer(const RenderPassDependency& dep);
-
-	/// Add new producer dependency.
-	void newProducer(const RenderPassDependency& dep);
+	/// Add a new consumer or producer dependency.
+	void newDependency(const RenderPassDependency& dep);
 
 protected:
 	enum class Type : U8
@@ -297,13 +302,13 @@ protected:
 	void* m_userData = nullptr;
 	U32 m_secondLevelCmdbsCount = 0;
 
-	DynamicArray<RenderPassDependency> m_consumers;
-	DynamicArray<RenderPassDependency> m_producers;
+	DynamicArray<RenderPassDependency> m_rtDeps;
+	DynamicArray<RenderPassDependency> m_buffDeps;
 
-	BitSet<MAX_RENDER_GRAPH_RENDER_TARGETS, U64> m_consumerRtMask = {false};
-	BitSet<MAX_RENDER_GRAPH_RENDER_TARGETS, U64> m_producerRtMask = {false};
-	BitSet<MAX_RENDER_GRAPH_BUFFERS, U64> m_consumerBufferMask = {false};
-	BitSet<MAX_RENDER_GRAPH_BUFFERS, U64> m_producerBufferMask = {false};
+	BitSet<MAX_RENDER_GRAPH_RENDER_TARGETS, U64> m_readRtMask = {false};
+	BitSet<MAX_RENDER_GRAPH_RENDER_TARGETS, U64> m_writeRtMask = {false};
+	BitSet<MAX_RENDER_GRAPH_BUFFERS, U64> m_readBuffMask = {false};
+	BitSet<MAX_RENDER_GRAPH_BUFFERS, U64> m_writeBuffMask = {false};
 	Bool8 m_hasBufferDeps = false; ///< Opt.
 
 	String m_name;
@@ -321,6 +326,8 @@ protected:
 	}
 
 	void fixSubresource(RenderPassDependency& dep) const;
+
+	void validateDep(const RenderPassDependency& dep);
 };
 
 /// Framebuffer attachment info.
@@ -349,11 +356,6 @@ public:
 	U32 m_colorAttachmentCount = 0;
 	FramebufferDescriptionAttachment m_depthStencilAttachment;
 
-	void setDefaultFramebuffer()
-	{
-		m_defaultFb = true;
-	}
-
 	/// Calculate the hash for the framebuffer.
 	void bake();
 
@@ -363,8 +365,6 @@ public:
 	}
 
 private:
-	Bool8 m_defaultFb = false;
-
 	U64 m_hash = 0;
 };
 
@@ -389,7 +389,7 @@ public:
 		ANKI_ASSERT(fbInfo.isBacked() && "Forgot call GraphicsRenderPassFramebufferInfo::bake");
 		for(U i = 0; i < colorRenderTargetHandles.getSize(); ++i)
 		{
-			if(fbInfo.m_defaultFb || i >= fbInfo.m_colorAttachmentCount)
+			if(i >= fbInfo.m_colorAttachmentCount)
 			{
 				ANKI_ASSERT(!colorRenderTargetHandles[i].isValid());
 			}
@@ -399,7 +399,7 @@ public:
 			}
 		}
 
-		if(fbInfo.m_defaultFb || !fbInfo.m_depthStencilAttachment.m_aspect)
+		if(!fbInfo.m_depthStencilAttachment.m_aspect)
 		{
 			ANKI_ASSERT(!depthStencilRenderTargetHandle.isValid());
 		}
@@ -410,11 +410,8 @@ public:
 #endif
 
 		m_fbDescr = fbInfo;
-		if(!fbInfo.m_defaultFb)
-		{
-			memcpy(&m_rtHandles[0], &colorRenderTargetHandles[0], sizeof(colorRenderTargetHandles));
-			m_rtHandles[MAX_COLOR_ATTACHMENTS] = depthStencilRenderTargetHandle;
-		}
+		memcpy(&m_rtHandles[0], &colorRenderTargetHandles[0], sizeof(colorRenderTargetHandles));
+		m_rtHandles[MAX_COLOR_ATTACHMENTS] = depthStencilRenderTargetHandle;
 		m_fbRenderArea = {{minx, miny, maxx, maxy}};
 	}
 
@@ -493,12 +490,13 @@ public:
 	}
 
 	/// Import an existing render target.
-	RenderTargetHandle importRenderTarget(CString name, TexturePtr tex, TextureUsageBit usage)
+	RenderTargetHandle importRenderTarget(TexturePtr tex, TextureUsageBit usage)
 	{
 		RT& rt = *m_renderTargets.emplaceBack(m_alloc);
 		rt.m_importedTex = tex;
-		rt.m_usage = usage;
-		rt.setName(name);
+		rt.m_importedLastKnownUsage = usage;
+		rt.m_usageDerivedByDeps = TextureUsageBit::NONE;
+		rt.setName(tex->getName());
 
 		RenderTargetHandle out;
 		out.m_idx = m_renderTargets.getSize() - 1;
@@ -509,10 +507,13 @@ public:
 	RenderTargetHandle newRenderTarget(const RenderTargetDescription& initInf)
 	{
 		ANKI_ASSERT(initInf.m_hash && "Forgot to call RenderTargetDescription::bake");
+		ANKI_ASSERT(
+			initInf.m_usage == TextureUsageBit::NONE && "Don't need to supply the usage. Render grap will find it");
 		RT& rt = *m_renderTargets.emplaceBack(m_alloc);
 		rt.m_initInfo = initInf;
 		rt.m_hash = initInf.m_hash;
-		rt.m_usage = TextureUsageBit::NONE;
+		rt.m_importedLastKnownUsage = TextureUsageBit::NONE;
+		rt.m_usageDerivedByDeps = TextureUsageBit::NONE;
 		rt.setName(initInf.getName());
 
 		RenderTargetHandle out;
@@ -521,10 +522,10 @@ public:
 	}
 
 	/// Import a buffer.
-	RenderPassBufferHandle importBuffer(CString name, BufferPtr buff, BufferUsageBit usage)
+	RenderPassBufferHandle importBuffer(BufferPtr buff, BufferUsageBit usage)
 	{
 		Buffer& b = *m_buffers.emplaceBack(m_alloc);
-		b.setName(name);
+		b.setName(buff->getName());
 		b.m_usage = usage;
 		b.m_importedBuff = buff;
 
@@ -553,7 +554,8 @@ private:
 		TextureInitInfo m_initInfo;
 		U64 m_hash = 0;
 		TexturePtr m_importedTex;
-		TextureUsageBit m_usage;
+		TextureUsageBit m_importedLastKnownUsage;
+		TextureUsageBit m_usageDerivedByDeps; ///< XXX
 	};
 
 	class Buffer : public Resource
@@ -655,14 +657,14 @@ private:
 	void setBatchBarriers(const RenderGraphDescription& descr);
 
 	TexturePtr getOrCreateRenderTarget(const TextureInitInfo& initInf, U64 hash);
-	FramebufferPtr getOrCreateFramebuffer(const FramebufferDescription& fbDescr, const RenderTargetHandle* rtHandles);
+	FramebufferPtr getOrCreateFramebuffer(const FramebufferDescription& fbDescr,
+		const RenderTargetHandle* rtHandles,
+		CString name,
+		Bool& drawsToPresentableTex);
 
-	ANKI_HOT Bool passADependsOnB(const RenderPassDescriptionBase& a, const RenderPassDescriptionBase& b) const;
+	ANKI_HOT static Bool passADependsOnB(const RenderPassDescriptionBase& a, const RenderPassDescriptionBase& b);
 
 	static Bool overlappingTextureSubresource(const TextureSubresourceInfo& suba, const TextureSubresourceInfo& subb);
-
-	template<Bool isTexture>
-	ANKI_HOT Bool overlappingDependency(const RenderPassDependency& a, const RenderPassDependency& b) const;
 
 	static Bool passHasUnmetDependencies(const BakeContext& ctx, U32 passIdx);
 

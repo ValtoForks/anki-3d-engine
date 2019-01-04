@@ -6,13 +6,16 @@
 #include <anki/scene/components/DecalComponent.h>
 #include <anki/scene/SceneGraph.h>
 #include <anki/resource/ResourceManager.h>
+#include <shaders/glsl_cpp_common/ClusteredShading.h>
 
 namespace anki
 {
 
 DecalComponent::DecalComponent(SceneNode* node)
-	: SceneComponent(CLASS_TYPE, node)
+	: SceneComponent(CLASS_TYPE)
+	, m_node(node)
 {
+	ANKI_ASSERT(node);
 }
 
 DecalComponent::~DecalComponent()
@@ -23,7 +26,7 @@ Error DecalComponent::setLayer(CString texAtlasFname, CString texAtlasSubtexName
 {
 	Layer& l = m_layers[type];
 
-	ANKI_CHECK(getSceneGraph().getResourceManager().loadResource(texAtlasFname, l.m_atlas));
+	ANKI_CHECK(m_node->getSceneGraph().getResourceManager().loadResource(texAtlasFname, l.m_atlas));
 
 	ANKI_CHECK(l.m_atlas->getSubTextureInfo(texAtlasSubtexName, &l.m_uv[0]));
 
@@ -54,7 +57,7 @@ void DecalComponent::updateInternal()
 		-m_sizes.x() / 2.0f,
 		m_sizes.y() / 2.0f,
 		-m_sizes.y() / 2.0f,
-		FRUSTUM_NEAR_PLANE,
+		LIGHT_FRUSTUM_NEAR_PLANE,
 		m_sizes.z());
 
 	static const Mat4 biasMat4(0.5, 0.0, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);

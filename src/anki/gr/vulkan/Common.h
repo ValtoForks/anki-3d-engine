@@ -47,6 +47,8 @@ enum class VulkanExtensions : U16
 	NV_DEDICATED_ALLOCATION = 1 << 7,
 	EXT_SHADER_SUBGROUP_BALLOT = 1 << 8,
 	EXT_DEBUG_REPORT = 1 << 9,
+	AMD_SHADER_INFO = 1 << 10,
+	AMD_RASTERIZATION_ORDER = 1 << 11,
 };
 ANKI_ENUM_ALLOW_NUMERIC_OPERATIONS(VulkanExtensions, inline)
 
@@ -64,7 +66,7 @@ const U DESCRIPTOR_FRAME_BUFFERING = 60 * 5; ///< How many frames worth of descr
 		VkResult rez; \
 		if((rez = (x)) < 0) \
 		{ \
-			ANKI_VK_LOGF("Vulkan function failed (VkResult: %d): %s", rez, #x); \
+			ANKI_VK_LOGF("Vulkan function failed (VkResult: %s): %s", vkResultToString(rez), #x); \
 		} \
 	} while(0)
 
@@ -75,7 +77,7 @@ const U DESCRIPTOR_FRAME_BUFFERING = 60 * 5; ///< How many frames worth of descr
 		VkResult rez; \
 		if((rez = (x)) < 0) \
 		{ \
-			ANKI_VK_LOGE("Vulkan function failed (VkResult: %d): %s", rez, #x); \
+			ANKI_VK_LOGE("Vulkan function failed (VkResult: %s): %s", vkResultToString(rez), #x); \
 			return Error::FUNCTION_FAILED; \
 		} \
 	} while(0)
@@ -235,6 +237,27 @@ ANKI_USE_RESULT inline VkIndexType convertIndexType(IndexType ak)
 
 	return out;
 }
+
+ANKI_USE_RESULT inline VkRasterizationOrderAMD convertRasterizationOrder(RasterizationOrder ak)
+{
+	VkRasterizationOrderAMD out;
+	switch(ak)
+	{
+	case RasterizationOrder::ORDERED:
+		out = VK_RASTERIZATION_ORDER_STRICT_AMD;
+		break;
+	case RasterizationOrder::RELAXED:
+		out = VK_RASTERIZATION_ORDER_RELAXED_AMD;
+		break;
+	default:
+		ANKI_ASSERT(0);
+		out = VK_RASTERIZATION_ORDER_STRICT_AMD;
+	}
+
+	return out;
+}
+
+ANKI_USE_RESULT const char* vkResultToString(VkResult res);
 /// @}
 
 } // end namespace anki

@@ -57,17 +57,8 @@ Error ShaderImpl::init(const ShaderInitInfo& inf)
 
 #if ANKI_DUMP_SHADERS
 	{
-		static U32 name = 0;
-		SpinLock m_nameLock;
-
-		U32 newName;
-		{
-			LockGuard<SpinLock> lock(m_nameLock);
-			newName = name++;
-		}
-
 		StringAuto fnameSpirv(getAllocator());
-		fnameSpirv.sprintf("%s/%05u.spv", getManager().getCacheDirectory().cstr(), newName);
+		fnameSpirv.sprintf("%s/%05u.spv", getManager().getCacheDirectory().cstr(), getUuid());
 
 		File fileSpirv;
 		ANKI_CHECK(fileSpirv.open(fnameSpirv.toCString(), FileOpenFlag::BINARY | FileOpenFlag::WRITE));
@@ -129,12 +120,16 @@ void ShaderImpl::doReflection(ConstWeakArray<U8> spirv, SpecConstsVector& specCo
 	}};
 	Array2d<DescriptorBinding, MAX_DESCRIPTOR_SETS, MAX_BINDINGS_PER_DESCRIPTOR_SET> descriptors;
 
-	auto func = [&](const std::vector<spirv_cross::Resource>& resources, DescriptorType type) -> void {
+	auto func = [&](const std::vector<spirv_cross::Resource>& resources,
+					DescriptorType type,
+					U minVkBinding,
+					U maxVkBinding) -> void {
 		for(const spirv_cross::Resource& r : resources)
 		{
 			const U32 id = r.id;
 			const U32 set = spvc.get_decoration(id, spv::Decoration::DecorationDescriptorSet);
 			const U32 binding = spvc.get_decoration(id, spv::Decoration::DecorationBinding);
+			ANKI_ASSERT(binding >= minVkBinding && binding <= maxVkBinding);
 
 			m_descriptorSetMask.set(set);
 			m_activeBindingMask[set].set(set);
@@ -152,10 +147,19 @@ void ShaderImpl::doReflection(ConstWeakArray<U8> spirv, SpecConstsVector& specCo
 		}
 	};
 
-	func(rsrc.uniform_buffers, DescriptorType::UNIFORM_BUFFER);
-	func(rsrc.sampled_images, DescriptorType::TEXTURE);
-	func(rsrc.storage_buffers, DescriptorType::STORAGE_BUFFER);
-	func(rsrc.storage_images, DescriptorType::IMAGE);
+	func(rsrc.uniform_buffers,
+		DescriptorType::UNIFORM_BUFFER,
+		MAX_TEXTURE_BINDINGS,
+		MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS - 1);
+	func(rsrc.sampled_images, DescriptorType::TEXTURE, 0, MAX_TEXTURE_BINDINGS - 1);
+	func(rsrc.storage_buffers,
+		DescriptorType::STORAGE_BUFFER,
+		MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS,
+		MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS + MAX_STORAGE_BUFFER_BINDINGS - 1);
+	func(rsrc.storage_images,
+		DescriptorType::IMAGE,
+		MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS + MAX_STORAGE_BUFFER_BINDINGS,
+		MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS + MAX_STORAGE_BUFFER_BINDINGS + MAX_IMAGE_BINDINGS - 1);
 
 	for(U set = 0; set < MAX_DESCRIPTOR_SETS; ++set)
 	{
@@ -196,8 +200,7 @@ void ShaderImpl::doReflection(ConstWeakArray<U8> spirv, SpecConstsVector& specCo
 	// Push consts
 	if(rsrc.push_constant_buffers.size() == 1)
 	{
-		const U32 blockSize =
-			spvc.get_declared_struct_size(spvc.get_type(rsrcActive.push_constant_buffers[0].base_type_id));
+		const U32 blockSize = spvc.get_declared_struct_size(spvc.get_type(rsrc.push_constant_buffers[0].base_type_id));
 		ANKI_ASSERT(blockSize > 0);
 		ANKI_ASSERT(blockSize % 16 == 0 && "Should be aligned");
 		ANKI_ASSERT(blockSize <= getGrManagerImpl().getDeviceCapabilities().m_pushConstantsSize);

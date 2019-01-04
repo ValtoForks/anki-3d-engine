@@ -59,7 +59,7 @@ public:
 
 	Bool getMarkedForDeletion() const
 	{
-		return m_flags.get(Flag::MARKED_FOR_DELETION);
+		return m_markedForDeletion;
 	}
 
 	void setMarkedForDeletion();
@@ -68,17 +68,22 @@ public:
 
 	Timestamp getComponentMaxTimestamp() const
 	{
-		ANKI_ASSERT(m_maxComponentTimestamp > 0);
 		return m_maxComponentTimestamp;
 	}
 
-	SceneAllocator<U8> getSceneAllocator() const;
+	void setComponentMaxTimestamp(Timestamp maxComponentTimestamp)
+	{
+		ANKI_ASSERT(maxComponentTimestamp > 0);
+		m_maxComponentTimestamp = maxComponentTimestamp;
+	}
+
+	SceneAllocator<U8> getAllocator() const;
 
 	SceneFrameAllocator<U8> getFrameAllocator() const;
 
 	void addChild(SceneNode* obj)
 	{
-		Base::addChild(getSceneAllocator(), obj);
+		Base::addChild(getAllocator(), obj);
 	}
 
 	/// This is called by the scene every frame after logic and before rendering. By default it does nothing.
@@ -89,27 +94,6 @@ public:
 		(void)prevUpdateTime;
 		(void)crntTime;
 		return Error::NONE;
-	}
-
-	ANKI_USE_RESULT Error frameUpdateComplete(Second prevUpdateTime, Second crntTime, Timestamp maxComponentTimestamp)
-	{
-		m_sectorVisitedBitset.unsetAll();
-		m_maxComponentTimestamp = maxComponentTimestamp;
-		if(m_components.getSize() > 0)
-		{
-			ANKI_ASSERT(maxComponentTimestamp > 0);
-		}
-		return frameUpdate(prevUpdateTime, crntTime);
-	}
-
-	/// Inform if a sector has visited this node.
-	/// @return The previous value.
-	Bool fetchSetSectorVisited(U testId, Bool visited)
-	{
-		LockGuard<SpinLock> lock(m_sectorVisitedBitsetLock);
-		Bool prevValue = m_sectorVisitedBitset.get(testId);
-		m_sectorVisitedBitset.set(testId, visited);
-		return prevValue;
 	}
 
 	/// Iterate all components
@@ -222,36 +206,23 @@ protected:
 	template<typename TComponent, typename... TArgs>
 	TComponent* newComponent(TArgs&&... args)
 	{
-		TComponent* comp = getSceneAllocator().newInstance<TComponent>(std::forward<TArgs>(args)...);
-		m_components.emplaceBack(getSceneAllocator(), comp);
+		TComponent* comp = getAllocator().newInstance<TComponent>(std::forward<TArgs>(args)...);
+		m_components.emplaceBack(getAllocator(), comp);
 		return comp;
 	}
 
 	ResourceManager& getResourceManager();
 
 private:
-	enum class Flag : U8
-	{
-		MARKED_FOR_DELETION = 1 << 0
-	};
-	ANKI_ENUM_ALLOW_NUMERIC_OPERATIONS(Flag, friend)
-
 	SceneGraph* m_scene = nullptr;
+	U64 m_uuid;
+	String m_name; ///< A unique name
 
 	DynamicArray<SceneComponent*> m_components;
 
-	String m_name; ///< A unique name
-	BitMask<Flag> m_flags;
-
-	/// A mask of bits for each test. If bit set then the node was visited by a sector.
-	BitSet<256> m_sectorVisitedBitset = {false};
-	SpinLock m_sectorVisitedBitsetLock;
-
-	U64 m_uuid;
-
 	Timestamp m_maxComponentTimestamp = 0;
 
-	void cacheImportantComponents();
+	Bool8 m_markedForDeletion = false;
 };
 /// @}
 

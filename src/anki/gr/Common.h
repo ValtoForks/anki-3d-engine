@@ -44,7 +44,7 @@ const U MAX_TEXTURE_LAYERS = 32;
 const U MAX_SPECIALIZED_CONSTS = 64;
 
 const U MAX_TEXTURE_BINDINGS = 16;
-const U MAX_UNIFORM_BUFFER_BINDINGS = 4;
+const U MAX_UNIFORM_BUFFER_BINDINGS = 6;
 const U MAX_STORAGE_BUFFER_BINDINGS = 4;
 const U MAX_IMAGE_BINDINGS = 4;
 const U MAX_TEXTURE_BUFFER_BINDINGS = 4;
@@ -108,15 +108,6 @@ extern Array<CString, U(GpuVendor::COUNT)> GPU_VENDOR_STR;
 class GpuDeviceCapabilities
 {
 public:
-	/// Max push constant size.
-	U32 m_pushConstantsSize = 128;
-
-	/// GPU vendor.
-	GpuVendor m_gpuVendor = GpuVendor::UNKNOWN;
-
-	/// Device supports subgroup operations.
-	Bool8 m_shaderSubgroups = false;
-
 	/// The alignment of offsets when bounding uniform buffers.
 	PtrSize m_uniformBufferBindOffsetAlignment = MAX_U32;
 
@@ -134,6 +125,21 @@ public:
 
 	/// The max visible range of texture buffers inside the shaders.
 	PtrSize m_textureBufferMaxRange = 0;
+
+	/// Max push constant size.
+	U32 m_pushConstantsSize = 128;
+
+	/// GPU vendor.
+	GpuVendor m_gpuVendor = GpuVendor::UNKNOWN;
+
+	/// API version.
+	U8 m_minorApiVersion = 0;
+
+	/// API version.
+	U8 m_majorApiVersion = 0;
+
+	// WARNING Remember to pad it because valgrind complains.
+	U8 _m_padding[1];
 };
 
 /// The type of the allocator for heap allocations
@@ -361,6 +367,7 @@ private:
 /// Compute max number of mipmaps for a 2D texture.
 inline U computeMaxMipmapCount2d(U w, U h, U minSizeOfLastMip = 1)
 {
+	ANKI_ASSERT(w > minSizeOfLastMip && h > minSizeOfLastMip);
 	U s = (w < h) ? w : h;
 	U count = 0;
 	while(s >= minSizeOfLastMip)

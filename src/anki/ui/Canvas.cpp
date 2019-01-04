@@ -39,7 +39,7 @@ Error Canvas::init(FontPtr font, U32 fontHeight, U32 width, U32 height)
 	nk_buffer_init(&m_nkCmdsBuff, &alloc, 1_KB);
 
 	// Create program
-	ANKI_CHECK(m_manager->getResourceManager().loadResource("programs/Ui.ankiprog", m_prog));
+	ANKI_CHECK(m_manager->getResourceManager().loadResource("shaders/Ui.glslp", m_prog));
 	const ShaderProgramResourceVariant* variant;
 
 	for(U i = 0; i < SHADER_COUNT; ++i)
@@ -58,7 +58,7 @@ Error Canvas::init(FontPtr font, U32 fontHeight, U32 width, U32 height)
 	SamplerInitInfo samplerInit("Canvas");
 	samplerInit.m_minMagFilter = SamplingFilter::LINEAR;
 	samplerInit.m_mipmapFilter = SamplingFilter::LINEAR;
-	samplerInit.m_repeat = true;
+	samplerInit.m_addressing = SamplingAddressing::REPEAT;
 	m_sampler = m_manager->getGrManager().newSampler(samplerInit);
 
 	return Error::NONE;
@@ -205,8 +205,8 @@ void Canvas::appendToCommandBuffer(CommandBufferPtr cmdb)
 	// Vert & idx buffers
 	cmdb->bindVertexBuffer(0, vertCtx.m_token.m_buffer, vertCtx.m_token.m_offset, sizeof(Vert));
 	cmdb->setVertexAttribute(0, 0, Format::R32G32_SFLOAT, 0);
-	cmdb->setVertexAttribute(1, 0, Format::R32G32_SFLOAT, sizeof(Vec2));
-	cmdb->setVertexAttribute(2, 0, Format::R8G8B8A8_UNORM, sizeof(Vec2) * 2);
+	cmdb->setVertexAttribute(1, 0, Format::R8G8B8A8_UNORM, sizeof(Vec2) * 2);
+	cmdb->setVertexAttribute(2, 0, Format::R32G32_SFLOAT, sizeof(Vec2));
 
 	cmdb->bindIndexBuffer(idxCtx.m_token.m_buffer, idxCtx.m_token.m_offset, IndexType::U16);
 

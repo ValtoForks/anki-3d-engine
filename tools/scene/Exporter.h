@@ -12,9 +12,12 @@
 #include <fstream>
 #include <vector>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#pragma GCC diagnostic pop
 
 #include "Common.h"
 
@@ -47,15 +50,6 @@ struct VertexWeight
 	uint32_t m_bonesCount;
 };
 
-class Portal
-{
-public:
-	uint32_t m_meshIndex;
-	aiMatrix4x4 m_transform;
-};
-
-using Sector = Portal;
-
 class ParticleEmitter
 {
 public:
@@ -74,7 +68,8 @@ class ReflectionProbe
 {
 public:
 	aiVector3D m_position;
-	float m_radius;
+	aiVector3D m_aabbMin;
+	aiVector3D m_aabbMax;
 };
 
 class ReflectionProxy
@@ -125,8 +120,6 @@ public:
 	std::ofstream m_sceneFile;
 
 	std::vector<StaticCollisionNode> m_staticCollisionNodes;
-	std::vector<Portal> m_portals;
-	std::vector<Sector> m_sectors;
 	std::vector<ParticleEmitter> m_particleEmitters;
 	std::vector<ReflectionProbe> m_reflectionProbes;
 	std::vector<ReflectionProxy> m_reflectionProxies;

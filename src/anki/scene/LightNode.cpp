@@ -4,10 +4,12 @@
 // http://www.anki3d.org/LICENSE
 
 #include <anki/scene/LightNode.h>
+#include <anki/scene/SceneGraph.h>
 #include <anki/scene/components/LensFlareComponent.h>
 #include <anki/scene/components/MoveComponent.h>
 #include <anki/scene/components/SpatialComponent.h>
 #include <anki/scene/components/FrustumComponent.h>
+#include <shaders/glsl_cpp_common/ClusteredShading.h>
 
 namespace anki
 {
@@ -16,12 +18,12 @@ namespace anki
 class LightNode::MovedFeedbackComponent : public SceneComponent
 {
 public:
-	MovedFeedbackComponent(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	MovedFeedbackComponent()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	Error update(SceneNode& node, Second, Second, Bool& updated) override
+	Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 		LightNode& lnode = static_cast<LightNode&>(node);
@@ -41,17 +43,17 @@ public:
 class LightNode::LightChangedFeedbackComponent : public SceneComponent
 {
 public:
-	LightChangedFeedbackComponent(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	LightChangedFeedbackComponent()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	Error update(SceneNode& node, Second, Second, Bool& updated) override
+	Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 		LightNode& lnode = static_cast<LightNode&>(node);
 
-		LightComponent& light = node.getComponentAt<LightComponent>(getIndex() - 1);
+		LightComponent& light = node.getComponent<LightComponent>();
 		if(light.getTimestamp() == node.getGlobalTimestamp())
 		{
 			// Shape updated
@@ -74,16 +76,16 @@ LightNode::~LightNode()
 Error LightNode::init(LightComponentType type, CollisionShape* shape)
 {
 	// Move component
-	newComponent<MoveComponent>(this);
+	newComponent<MoveComponent>();
 
 	// Feedback component
-	newComponent<MovedFeedbackComponent>(this);
+	newComponent<MovedFeedbackComponent>();
 
 	// Light component
-	newComponent<LightComponent>(this, type);
+	newComponent<LightComponent>(type, getSceneGraph().getNewUuid());
 
 	// Feedback component
-	newComponent<LightChangedFeedbackComponent>(this);
+	newComponent<LightChangedFeedbackComponent>();
 
 	// Spatial component
 	newComponent<SpatialComponent>(this, shape);
@@ -168,7 +170,7 @@ PointLightNode::PointLightNode(SceneGraph* scene, CString name)
 
 PointLightNode::~PointLightNode()
 {
-	m_shadowData.destroy(getSceneAllocator());
+	m_shadowData.destroy(getAllocator());
 }
 
 Error PointLightNode::init()
@@ -214,11 +216,11 @@ Error PointLightNode::frameUpdate(Second prevUpdateTime, Second crntTime)
 {
 	if(getComponent<LightComponent>().getShadowEnabled() && m_shadowData.isEmpty())
 	{
-		m_shadowData.create(getSceneAllocator(), 6);
+		m_shadowData.create(getAllocator(), 6);
 
 		const F32 ang = toRad(90.0);
 		const F32 dist = m_sphereW.getRadius();
-		const F32 zNear = LightComponent::FRUSTUM_NEAR_PLANE;
+		const F32 zNear = LIGHT_FRUSTUM_NEAR_PLANE;
 
 		Mat3 rot;
 
@@ -286,8 +288,7 @@ void SpotLightNode::onMoveUpdate(const MoveComponent& move)
 void SpotLightNode::onShapeUpdate(LightComponent& light)
 {
 	onShapeUpdateCommon(light);
-	m_frustum.setAll(
-		light.getOuterAngle(), light.getOuterAngle(), LightComponent::FRUSTUM_NEAR_PLANE, light.getDistance());
+	m_frustum.setAll(light.getOuterAngle(), light.getOuterAngle(), LIGHT_FRUSTUM_NEAR_PLANE, light.getDistance());
 }
 
 Error SpotLightNode::frameUpdate(Second prevUpdateTime, Second crntTime)

@@ -11,6 +11,10 @@
 namespace anki
 {
 
+// Forward
+template<typename T>
+class DynamicArrayAuto;
+
 /// @addtogroup util_containers
 /// @{
 
@@ -63,6 +67,9 @@ public:
 		b.m_capacity = 0;
 		return *this;
 	}
+
+	/// Move DynamicArrayAuto to this.
+	DynamicArray& operator=(DynamicArrayAuto<T>&& b);
 
 	// Non-copyable
 	DynamicArray& operator=(const DynamicArray& b) = delete;
@@ -210,7 +217,7 @@ public:
 	Iterator emplaceBack(TAllocator alloc, TArgs&&... args)
 	{
 		resizeStorage(alloc, m_size + 1);
-		::new(&m_data[m_size]) Value(std::forward<TArgs>(args)...);
+		alloc.construct(&m_data[m_size], std::forward<TArgs>(args)...);
 		++m_size;
 		return &m_data[m_size - 1];
 	}

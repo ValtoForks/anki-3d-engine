@@ -7,7 +7,7 @@
 
 #include <anki/scene/components/SceneComponent.h>
 #include <anki/resource/Forward.h>
-#include <anki/script/Forward.h>
+#include <anki/script/ScriptEnvironment.h>
 
 namespace anki
 {
@@ -27,11 +27,12 @@ public:
 
 	ANKI_USE_RESULT Error load(CString fname);
 
-	ANKI_USE_RESULT Error update(SceneNode&, Second prevTime, Second crntTime, Bool& updated) override;
+	ANKI_USE_RESULT Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override;
 
 private:
+	SceneNode* m_node;
 	ScriptResourcePtr m_script;
-	ScriptEnvironmentPtr m_env;
+	ScriptEnvironment m_env;
 };
 /// @}
 

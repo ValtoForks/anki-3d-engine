@@ -12,28 +12,37 @@
 namespace anki
 {
 
-RenderComponent::RenderComponent(SceneNode* node, MaterialResourcePtr mtl)
-	: SceneComponent(SceneComponentType::RENDER, node)
+MaterialRenderComponent::MaterialRenderComponent(SceneNode* node, MaterialResourcePtr mtl)
+	: m_node(node)
 	, m_mtl(mtl)
 {
+	ANKI_ASSERT(node);
+
 	// Create the material variables
-	m_vars.create(getAllocator(), m_mtl->getVariables().getSize());
+	m_vars.create(m_node->getAllocator(), m_mtl->getVariables().getSize());
 	U count = 0;
 	for(const MaterialVariable& mv : m_mtl->getVariables())
 	{
 		m_vars[count++].m_mvar = &mv;
 	}
+
+	m_isForwardShading = mtl->isForwardShading();
+	m_castsShadow = mtl->castsShadow();
 }
 
-RenderComponent::~RenderComponent()
+MaterialRenderComponent::~MaterialRenderComponent()
 {
-	m_vars.destroy(getAllocator());
+	m_vars.destroy(m_node->getAllocator());
 }
 
-void RenderComponent::allocateAndSetupUniforms(
-	U set, const RenderQueueDrawContext& ctx, ConstWeakArray<Mat4> transforms, StagingGpuMemoryManager& alloc) const
+void MaterialRenderComponent::allocateAndSetupUniforms(U set,
+	const RenderQueueDrawContext& ctx,
+	ConstWeakArray<Mat4> transforms,
+	ConstWeakArray<Mat4> prevTransforms,
+	StagingGpuMemoryManager& alloc) const
 {
 	ANKI_ASSERT(transforms.getSize() <= MAX_INSTANCES);
+	ANKI_ASSERT(prevTransforms.getSize() == transforms.getSize());
 
 	const MaterialVariant& variant = m_mtl->getOrCreateVariant(ctx.m_key);
 	const ShaderProgramResourceVariant& progVariant = variant.getShaderProgramResourceVariant();
@@ -62,7 +71,7 @@ void RenderComponent::allocateAndSetupUniforms(
 	// Iterate variables
 	for(auto it = m_vars.getBegin(); it != m_vars.getEnd(); ++it)
 	{
-		const RenderComponentVariable& var = *it;
+		const MaterialRenderComponentVariable& var = *it;
 		const MaterialVariable& mvar = var.getMaterialVariable();
 		const ShaderProgramResourceInputVariable& progvar = mvar.getShaderProgramResourceInputVariable();
 
@@ -127,7 +136,7 @@ void RenderComponent::allocateAndSetupUniforms(
 			{
 				ANKI_ASSERT(transforms.getSize() > 0);
 
-				DynamicArrayAuto<Mat3> normMats(getFrameAllocator());
+				DynamicArrayAuto<Mat3> normMats(m_node->getFrameAllocator());
 				normMats.create(transforms.getSize());
 
 				for(U i = 0; i < transforms.getSize(); i++)
@@ -145,7 +154,7 @@ void RenderComponent::allocateAndSetupUniforms(
 			{
 				ANKI_ASSERT(transforms.getSize() > 0);
 
-				DynamicArrayAuto<Mat3> rots(getFrameAllocator());
+				DynamicArrayAuto<Mat3> rots(m_node->getFrameAllocator());
 				rots.create(transforms.getSize());
 
 				for(U i = 0; i < transforms.getSize(); i++)
@@ -182,7 +191,7 @@ void RenderComponent::allocateAndSetupUniforms(
 			{
 				ANKI_ASSERT(transforms.getSize() > 0);
 
-				DynamicArrayAuto<Mat4> mvp(getFrameAllocator());
+				DynamicArrayAuto<Mat4> mvp(m_node->getFrameAllocator());
 				mvp.create(transforms.getSize());
 
 				for(U i = 0; i < transforms.getSize(); i++)
@@ -193,11 +202,27 @@ void RenderComponent::allocateAndSetupUniforms(
 				progVariant.writeShaderBlockMemory(progvar, &mvp[0], transforms.getSize(), uniformsBegin, uniformsEnd);
 				break;
 			}
+			case BuiltinMaterialVariableId::PREVIOUS_MODEL_VIEW_PROJECTION_MATRIX:
+			{
+				ANKI_ASSERT(prevTransforms.getSize() > 0);
+
+				DynamicArrayAuto<Mat4> mvp(m_node->getFrameAllocator());
+				mvp.create(prevTransforms.getSize());
+
+				for(U i = 0; i < prevTransforms.getSize(); i++)
+				{
+					mvp[i] = ctx.m_previousViewProjectionMatrix * prevTransforms[i];
+				}
+
+				progVariant.writeShaderBlockMemory(
+					progvar, &mvp[0], prevTransforms.getSize(), uniformsBegin, uniformsEnd);
+				break;
+			}
 			case BuiltinMaterialVariableId::MODEL_VIEW_MATRIX:
 			{
 				ANKI_ASSERT(transforms.getSize() > 0);
 
-				DynamicArrayAuto<Mat4> mv(getFrameAllocator());
+				DynamicArrayAuto<Mat4> mv(m_node->getFrameAllocator());
 				mv.create(transforms.getSize());
 
 				for(U i = 0; i < transforms.getSize(); i++)

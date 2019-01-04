@@ -17,14 +17,42 @@ namespace anki
 /// @addtogroup scene
 /// @{
 
-/// A wrapper on top of MaterialVariable
-class RenderComponentVariable
+/// Render component interface. Implemented by renderable scene nodes
+class RenderComponent : public SceneComponent
 {
-	friend class RenderComponent;
+public:
+	static const SceneComponentType CLASS_TYPE = SceneComponentType::RENDER;
+
+	RenderComponent()
+		: SceneComponent(CLASS_TYPE)
+	{
+	}
+
+	Bool getCastsShadow() const
+	{
+		return m_castsShadow;
+	}
+
+	Bool isForwardShading() const
+	{
+		return m_isForwardShading;
+	}
+
+	virtual void setupRenderableQueueElement(RenderableQueueElement& el) const = 0;
+
+protected:
+	Bool8 m_castsShadow = false;
+	Bool8 m_isForwardShading = false;
+};
+
+/// A wrapper on top of MaterialVariable
+class MaterialRenderComponentVariable
+{
+	friend class MaterialRenderComponent;
 
 public:
-	RenderComponentVariable() = default;
-	~RenderComponentVariable() = default;
+	MaterialRenderComponentVariable() = default;
+	~MaterialRenderComponentVariable() = default;
 
 	template<typename T>
 	const T& getValue() const
@@ -41,17 +69,15 @@ private:
 	const MaterialVariable* m_mvar = nullptr;
 };
 
-/// RenderComponent interface. Implemented by renderable scene nodes
-class RenderComponent : public SceneComponent
+/// Material render component interface.
+class MaterialRenderComponent : public RenderComponent
 {
 public:
-	static const SceneComponentType CLASS_TYPE = SceneComponentType::RENDER;
+	using Variables = DynamicArray<MaterialRenderComponentVariable>;
 
-	using Variables = DynamicArray<RenderComponentVariable>;
+	MaterialRenderComponent(SceneNode* node, MaterialResourcePtr mtl);
 
-	RenderComponent(SceneNode* node, MaterialResourcePtr mtl);
-
-	~RenderComponent();
+	~MaterialRenderComponent();
 
 	Variables::Iterator getVariablesBegin()
 	{
@@ -80,10 +106,14 @@ public:
 		return *m_mtl;
 	}
 
-	Bool getCastsShadow() const
+	const SceneNode& getSceneNode() const
 	{
-		const MaterialResource& mtl = getMaterial();
-		return mtl.castsShadow();
+		return *m_node;
+	}
+
+	SceneNode& getSceneNode()
+	{
+		return *m_node;
 	}
 
 	/// Iterate variables using a lambda
@@ -103,11 +133,11 @@ public:
 	void allocateAndSetupUniforms(U set,
 		const RenderQueueDrawContext& ctx,
 		ConstWeakArray<Mat4> transforms,
+		ConstWeakArray<Mat4> prevTransforms,
 		StagingGpuMemoryManager& alloc) const;
 
-	virtual void setupRenderableQueueElement(RenderableQueueElement& el) const = 0;
-
 private:
+	SceneNode* m_node;
 	Variables m_vars;
 	MaterialResourcePtr m_mtl;
 };

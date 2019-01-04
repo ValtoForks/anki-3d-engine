@@ -9,80 +9,82 @@
 namespace anki
 {
 
-I32 PhysicsCollisionShape::m_gid = 1;
-
-PhysicsCollisionShape::~PhysicsCollisionShape()
+PhysicsSphere::PhysicsSphere(PhysicsWorld* world, F32 radius)
+	: PhysicsCollisionShape(world, ShapeType::SPHERE)
 {
-	if(m_shape)
-	{
-		NewtonDestroyCollision(m_shape);
-	}
+	m_sphere.init(radius);
+	m_sphere->setMargin(getWorld().getCollisionMargin());
+	m_sphere->setUserPointer(static_cast<PhysicsObject*>(this));
 }
 
-Error PhysicsSphere::create(PhysicsCollisionShapeInitInfo& init, F32 radius)
+PhysicsSphere::~PhysicsSphere()
 {
-	Error err = Error::NONE;
-
-	m_shape = NewtonCreateSphere(m_world->getNewtonWorld(), radius, m_gid++, nullptr);
-	if(!m_shape)
-	{
-		ANKI_PHYS_LOGE("NewtonCreateSphere() failed");
-		err = Error::FUNCTION_FAILED;
-	}
-
-	return err;
+	m_sphere.destroy();
 }
 
-Error PhysicsBox::create(PhysicsCollisionShapeInitInfo& init, const Vec3& extend)
+PhysicsBox::PhysicsBox(PhysicsWorld* world, const Vec3& extend)
+	: PhysicsCollisionShape(world, ShapeType::BOX)
 {
-	Error err = Error::NONE;
-
-	m_shape = NewtonCreateBox(m_world->getNewtonWorld(), extend.x(), extend.y(), extend.z(), m_gid++, nullptr);
-	if(!m_shape)
-	{
-		ANKI_PHYS_LOGE("NewtonCreateBox() failed");
-		err = Error::FUNCTION_FAILED;
-	}
-
-	return err;
+	m_box.init(toBt(extend));
+	m_box->setMargin(getWorld().getCollisionMargin());
+	m_box->setUserPointer(static_cast<PhysicsObject*>(this));
 }
 
-Error PhysicsTriangleSoup::create(PhysicsCollisionShapeInitInfo& init,
-	const Vec3* positions,
-	U32 positionsStride,
-	const U32* indices,
-	U32 indicesCount)
+PhysicsBox::~PhysicsBox()
 {
-	m_shape = NewtonCreateTreeCollision(m_world->getNewtonWorld(), 0);
-	if(!m_shape)
+	m_box.destroy();
+}
+
+PhysicsTriangleSoup::PhysicsTriangleSoup(
+	PhysicsWorld* world, ConstWeakArray<Vec3> positions, ConstWeakArray<U32> indices, Bool convex)
+	: PhysicsCollisionShape(world, ShapeType::TRI_MESH)
+{
+	if(!convex)
 	{
-		ANKI_PHYS_LOGE("NewtonCreateBox() failed");
-		return Error::FUNCTION_FAILED;
-	}
+		ANKI_ASSERT((indices.getSize() % 3) == 0);
 
-	NewtonTreeCollisionBeginBuild(m_shape);
+		m_mesh.init();
 
-	// Iterate index array
-	const U32* indicesEnd = indices + indicesCount;
-	for(; indices != indicesEnd; indices += 3)
-	{
-		Array<Vec3, 3> facePos;
-
-		for(U i = 0; i < 3; ++i)
+		for(U i = 0; i < indices.getSize(); i += 3)
 		{
-			U idx = indices[i];
-			const U8* ptr = reinterpret_cast<const U8*>(positions) + positionsStride * idx;
-
-			facePos[i] = *reinterpret_cast<const Vec3*>(ptr);
+			m_mesh->addTriangle(
+				toBt(positions[indices[i]]), toBt(positions[indices[i + 1]]), toBt(positions[indices[i + 2]]));
 		}
 
-		NewtonTreeCollisionAddFace(m_shape, 3, &facePos[0][0], sizeof(Vec3), 0);
+		// Create the dynamic shape
+		m_triMesh.m_dynamic.init(m_mesh.get());
+		m_triMesh.m_dynamic->setMargin(getWorld().getCollisionMargin());
+		m_triMesh.m_dynamic->updateBound();
+		m_triMesh.m_dynamic->setUserPointer(static_cast<PhysicsObject*>(this));
+
+		// And the static one
+		m_triMesh.m_static.init(m_mesh.get(), true);
+		m_triMesh.m_static->setMargin(getWorld().getCollisionMargin());
+		m_triMesh.m_static->setUserPointer(static_cast<PhysicsObject*>(this));
 	}
+	else
+	{
+		m_type = ShapeType::CONVEX; // Fake the type
 
-	const I optimize = 1;
-	NewtonTreeCollisionEndBuild(m_shape, optimize);
+		m_convex.init(&positions[0][0], positions.getSize(), sizeof(Vec3));
+		m_convex->setMargin(getWorld().getCollisionMargin());
+		m_convex->setUserPointer(static_cast<PhysicsObject*>(this));
+	}
+}
 
-	return Error::NONE;
+PhysicsTriangleSoup::~PhysicsTriangleSoup()
+{
+	if(m_type == ShapeType::TRI_MESH)
+	{
+		m_triMesh.m_dynamic.destroy();
+		m_triMesh.m_static.destroy();
+		m_mesh.destroy();
+	}
+	else
+	{
+		ANKI_ASSERT(m_type == ShapeType::CONVEX);
+		m_convex.destroy();
+	}
 }
 
 } // end namespace anki

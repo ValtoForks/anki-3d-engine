@@ -9,13 +9,13 @@
 #include <anki/util/File.h>
 #include <anki/util/Filesystem.h>
 #include <anki/util/System.h>
-#include <anki/util/ThreadPool.h>
 #include <anki/util/ThreadHive.h>
 #include <anki/core/Trace.h>
 
 #include <anki/core/NativeWindow.h>
 #include <anki/input/Input.h>
 #include <anki/scene/SceneGraph.h>
+#include <anki/renderer/RenderQueue.h>
 #include <anki/resource/ResourceManager.h>
 #include <anki/physics/PhysicsWorld.h>
 #include <anki/renderer/MainRenderer.h>
@@ -24,6 +24,7 @@
 #include <anki/resource/AsyncLoader.h>
 #include <anki/core/StagingGpuMemoryManager.h>
 #include <anki/ui/UiManager.h>
+#include <anki/ui/Canvas.h>
 
 #if ANKI_OS == ANKI_OS_ANDROID
 #	include <android_native_app_glue.h>
@@ -73,6 +74,7 @@ public:
 	BufferedValue<Second> m_lightBinTime;
 	BufferedValue<Second> m_sceneUpdateTime;
 	BufferedValue<Second> m_visTestsTime;
+	BufferedValue<Second> m_physicsTime;
 
 	PtrSize m_allocatedCpuMem = 0;
 	U64 m_allocCount = 0;
@@ -80,6 +82,9 @@ public:
 
 	U64 m_vkCpuMem = 0;
 	U64 m_vkGpuMem = 0;
+	U32 m_vkCmdbCount = 0;
+
+	U32 m_drawableCount = 0;
 
 	static const U32 BUFFERED_FRAMES = 16;
 	U32 m_bufferedFrames = 0;
@@ -107,7 +112,7 @@ public:
 
 		nk_style_push_style_item(ctx, &ctx->style.window.fixed_background, nk_style_item_color(nk_rgba(0, 0, 0, 128)));
 
-		if(nk_begin(ctx, "Stats", nk_rect(5, 5, 230, 290), 0))
+		if(nk_begin(ctx, "Stats", nk_rect(5, 5, 230, 450), 0))
 		{
 			nk_layout_row_dynamic(ctx, 17, 1);
 
@@ -117,6 +122,7 @@ public:
 			labelTime(ctx, m_lightBinTime.get(false), "Light bin");
 			labelTime(ctx, m_sceneUpdateTime.get(flush), "Scene update");
 			labelTime(ctx, m_visTestsTime.get(flush), "Visibility");
+			labelTime(ctx, m_physicsTime.get(flush), "Physics");
 
 			nk_label(ctx, " ", NK_TEXT_ALIGN_LEFT);
 			nk_label(ctx, "Memory:", NK_TEXT_ALIGN_LEFT);
@@ -125,6 +131,14 @@ public:
 			labelUint(ctx, m_freeCount, "Total frees");
 			labelBytes(ctx, m_vkCpuMem, "Vulkan CPU");
 			labelBytes(ctx, m_vkGpuMem, "Vulkan GPU");
+
+			nk_label(ctx, " ", NK_TEXT_ALIGN_LEFT);
+			nk_label(ctx, "Vulkan:", NK_TEXT_ALIGN_LEFT);
+			labelUint(ctx, m_vkCmdbCount, "Cmd buffers");
+
+			nk_label(ctx, " ", NK_TEXT_ALIGN_LEFT);
+			nk_label(ctx, "Other:", NK_TEXT_ALIGN_LEFT);
+			labelUint(ctx, m_drawableCount, "Drawbles");
 		}
 
 		nk_style_pop_style_item(ctx);
@@ -251,92 +265,36 @@ App::~App()
 
 void App::cleanup()
 {
-	if(m_script)
-	{
-		m_heapAlloc.deleteInstance(m_script);
-		m_script = nullptr;
-	}
+	m_heapAlloc.deleteInstance(m_scene);
+	m_heapAlloc.deleteInstance(m_script);
+	m_heapAlloc.deleteInstance(m_renderer);
+	m_statsUi.reset(nullptr);
+	m_heapAlloc.deleteInstance(m_ui);
+	m_heapAlloc.deleteInstance(m_resources);
+	m_heapAlloc.deleteInstance(m_resourceFs);
+	m_heapAlloc.deleteInstance(m_physics);
+	m_heapAlloc.deleteInstance(m_stagingMem);
+	m_heapAlloc.deleteInstance(m_threadHive);
+	GrManager::deleteInstance(m_gr);
+	m_heapAlloc.deleteInstance(m_input);
+	m_heapAlloc.deleteInstance(m_window);
 
-	if(m_scene)
+#if ANKI_ENABLE_TRACE
+	if(CoreTracerSingleton::get().isInitialized())
 	{
-		m_heapAlloc.deleteInstance(m_scene);
-		m_scene = nullptr;
+		StringAuto fname(m_heapAlloc);
+		fname.sprintf("%s/trace", m_settingsDir.cstr());
+		ANKI_CORE_LOGI("Will dump trace files: %s", fname.cstr());
+		if(CoreTracerSingleton::get().flush(fname.toCString()))
+		{
+			ANKI_CORE_LOGE("Ignoring error from the tracer");
+		}
+		CoreTracerSingleton::destroy();
 	}
-
-	if(m_renderer)
-	{
-		m_heapAlloc.deleteInstance(m_renderer);
-		m_renderer = nullptr;
-	}
-
-	if(m_ui)
-	{
-		m_statsUi.reset(nullptr);
-
-		m_heapAlloc.deleteInstance(m_ui);
-		m_ui = nullptr;
-	}
-
-	if(m_resources)
-	{
-		m_heapAlloc.deleteInstance(m_resources);
-		m_resources = nullptr;
-	}
-
-	if(m_resourceFs)
-	{
-		m_heapAlloc.deleteInstance(m_resourceFs);
-		m_resourceFs = nullptr;
-	}
-
-	if(m_physics)
-	{
-		m_heapAlloc.deleteInstance(m_physics);
-		m_physics = nullptr;
-	}
-
-	if(m_stagingMem)
-	{
-		m_heapAlloc.deleteInstance(m_stagingMem);
-		m_stagingMem = nullptr;
-	}
-
-	if(m_gr)
-	{
-		GrManager::deleteInstance(m_gr);
-		m_gr = nullptr;
-	}
-
-	if(m_threadpool)
-	{
-		m_heapAlloc.deleteInstance(m_threadpool);
-		m_threadpool = nullptr;
-	}
-
-	if(m_threadHive)
-	{
-		m_heapAlloc.deleteInstance(m_threadHive);
-		m_threadHive = nullptr;
-	}
-
-	if(m_input)
-	{
-		m_heapAlloc.deleteInstance(m_input);
-		m_input = nullptr;
-	}
-
-	if(m_window)
-	{
-		m_heapAlloc.deleteInstance(m_window);
-		m_window = nullptr;
-	}
+#endif
 
 	m_settingsDir.destroy(m_heapAlloc);
 	m_cacheDir.destroy(m_heapAlloc);
-
-#if ANKI_ENABLE_TRACE
-	TraceManagerSingleton::destroy();
-#endif
 }
 
 Error App::init(const ConfigSet& config, AllocAlignedCallback allocCb, void* allocCbUserData)
@@ -358,6 +316,11 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 
 	initMemoryCallbacks(allocCb, allocCbUserData);
 	m_heapAlloc = HeapAllocator<U8>(m_allocCb, m_allocCbData);
+
+#if ANKI_ENABLE_TRACE
+	CoreTracerSingleton::get().init(m_heapAlloc);
+	CoreTracerSingleton::get().newFrame(0);
+#endif
 
 	ANKI_CHECK(initDirs(config));
 
@@ -403,10 +366,6 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 	}
 #endif
 
-#if ANKI_ENABLE_TRACE
-	ANKI_CHECK(TraceManagerSingleton::get().create(m_heapAlloc, m_settingsDir.toCString()));
-#endif
-
 	ANKI_CORE_LOGI("Number of main threads: %u", U(config.getNumber("core.mainThreadCount")));
 
 	//
@@ -417,7 +376,7 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 	nwinit.m_height = config.getNumber("height");
 	nwinit.m_depthBits = 0;
 	nwinit.m_stencilBits = 0;
-	nwinit.m_fullscreenDesktopRez = config.getNumber("window.fullscreenDesktopResolution");
+	nwinit.m_fullscreenDesktopRez = config.getNumber("window.fullscreen");
 	m_window = m_heapAlloc.newInstance<NativeWindow>();
 
 	ANKI_CHECK(m_window->init(nwinit, m_heapAlloc));
@@ -431,7 +390,6 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 	//
 	// ThreadPool
 	//
-	m_threadpool = m_heapAlloc.newInstance<ThreadPool>(config.getNumber("core.mainThreadCount"), true);
 	m_threadHive = m_heapAlloc.newInstance<ThreadHive>(config.getNumber("core.mainThreadCount"), m_heapAlloc, true);
 
 	//
@@ -500,7 +458,7 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 	m_renderer = m_heapAlloc.newInstance<MainRenderer>();
 
 	ANKI_CHECK(m_renderer->init(
-		m_threadpool, m_resources, m_gr, m_stagingMem, m_ui, m_allocCb, m_allocCbData, config, &m_globalTimestamp));
+		m_threadHive, m_resources, m_gr, m_stagingMem, m_ui, m_allocCb, m_allocCbData, config, &m_globalTimestamp));
 
 	//
 	// Script
@@ -513,21 +471,15 @@ Error App::initInternal(const ConfigSet& config_, AllocAlignedCallback allocCb, 
 	//
 	m_scene = m_heapAlloc.newInstance<SceneGraph>();
 
-	ANKI_CHECK(m_scene->init(m_allocCb,
-		m_allocCbData,
-		m_threadpool,
-		m_threadHive,
-		m_resources,
-		m_input,
-		m_script,
-		&m_globalTimestamp,
-		config));
+	ANKI_CHECK(m_scene->init(
+		m_allocCb, m_allocCbData, m_threadHive, m_resources, m_input, m_script, &m_globalTimestamp, config));
 
 	// Inform the script engine about some subsystems
 	m_script->setRenderer(m_renderer);
 	m_script->setSceneGraph(m_scene);
 
 	ANKI_CORE_LOGI("Application initialized");
+
 	return Error::NONE;
 }
 
@@ -554,7 +506,7 @@ Error App::initDirs(const ConfigSet& cfg)
 	m_cacheDir.sprintf(m_heapAlloc, "%s/cache", &m_settingsDir[0]);
 
 	const Bool cacheDirExists = directoryExists(m_cacheDir.toCString());
-	if(cfg.getNumber("clearCaches") && cacheDirExists)
+	if(cfg.getNumber("core.clearCaches") && cacheDirExists)
 	{
 		ANKI_CORE_LOGI("Will delete the cache dir and start fresh: %s", &m_cacheDir[0]);
 		ANKI_CHECK(removeDirectory(m_cacheDir.toCString()));
@@ -601,13 +553,15 @@ Error App::mainLoop()
 
 	while(!quit)
 	{
-		ANKI_TRACE_START_FRAME();
+#if ANKI_ENABLE_TRACE
+		static U64 frame = 1;
+		CoreTracerSingleton::get().newFrame(frame++);
+#endif
+		ANKI_TRACE_START_EVENT(FRAME);
 		const Second startTime = HighRezTimer::getCurrentTime();
 
 		prevUpdateTime = crntTime;
 		crntTime = HighRezTimer::getCurrentTime();
-
-		m_gr->beginFrame();
 
 		// Update
 		ANKI_CHECK(m_input->handleEvents());
@@ -625,7 +579,8 @@ Error App::mainLoop()
 		injectStatsUiElement(newUiElementArr, rqueue);
 
 		// Render
-		ANKI_CHECK(m_renderer->render(rqueue));
+		TexturePtr presentableTex = m_gr->acquireNextPresentableTexture();
+		ANKI_CHECK(m_renderer->render(rqueue, presentableTex));
 
 		// Pause and sync async loader. That will force all tasks before the pause to finish in this frame.
 		m_resources->getAsyncLoader().pause();
@@ -640,6 +595,8 @@ Error App::mainLoop()
 
 		// Now resume the loader
 		m_resources->getAsyncLoader().resume();
+
+		ANKI_TRACE_STOP_EVENT(FRAME);
 
 		// Sleep
 		const Second endTime = HighRezTimer::getCurrentTime();
@@ -659,6 +616,7 @@ Error App::mainLoop()
 			statsUi.m_lightBinTime.set(m_renderer->getStats().m_lightBinTime);
 			statsUi.m_sceneUpdateTime.set(m_scene->getStats().m_updateTime);
 			statsUi.m_visTestsTime.set(m_scene->getStats().m_visibilityTestsTime);
+			statsUi.m_physicsTime.set(m_scene->getStats().m_physicsUpdate);
 			statsUi.m_allocatedCpuMem = m_memStats.m_allocatedMem.load();
 			statsUi.m_allocCount = m_memStats.m_allocCount.load();
 			statsUi.m_freeCount = m_memStats.m_freeCount.load();
@@ -666,11 +624,12 @@ Error App::mainLoop()
 			GrManagerStats grStats = m_gr->getStats();
 			statsUi.m_vkCpuMem = grStats.m_cpuMemory;
 			statsUi.m_vkGpuMem = grStats.m_gpuMemory;
+			statsUi.m_vkCmdbCount = grStats.m_commandBufferCount;
+
+			statsUi.m_drawableCount = rqueue.countAllRenderables();
 		}
 
 		++m_globalTimestamp;
-
-		ANKI_TRACE_STOP_FRAME();
 	}
 
 	return Error::NONE;
@@ -693,7 +652,7 @@ void App::injectStatsUiElement(DynamicArrayAuto<UiQueueElement>& newUiElementArr
 			static_cast<StatsUi*>(userData)->build(canvas);
 		};
 
-		rqueue.m_uis = newUiElementArr;
+		rqueue.m_uis = WeakArray<UiQueueElement>(newUiElementArr);
 	}
 }
 

@@ -10,6 +10,9 @@
 !*.xml
 !*.md
 !*.txt
-!*.ankiprog
+!*.glslp
+!*.anki*
+!*.blend
+!*.lua
 !CMakeLists.txt
 build*/*

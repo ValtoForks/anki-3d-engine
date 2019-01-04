@@ -32,11 +32,12 @@ class FinalComposite;
 class Dbg;
 class Indirect;
 class DownscaleBlur;
-class Volumetric;
+class VolumetricFog;
 class DepthDownscale;
 class TemporalAA;
-class Reflections;
 class UiStage;
+class Ssr;
+class VolumetricLightingAccumulation;
 
 class RenderingContext;
 class DebugDrawer;
@@ -49,6 +50,7 @@ class ReflectionProbeQueueElement;
 class DecalQueueElement;
 
 class ShaderProgramResourceVariant;
+class ClusterBin;
 
 /// @addtogroup renderer
 /// @{
@@ -68,8 +70,11 @@ const U BLOOM_FRACTION = 4;
 /// Volumetric size is rendererSize/VOLUMETRIC_FRACTION.
 const U VOLUMETRIC_FRACTION = 4;
 
-/// Number of mipmaps of the HZ map.
-const U HIERARCHICAL_Z_MIPMAP_COUNT = 4;
+/// SSR size is rendererSize/SSR_FRACTION.
+const U SSR_FRACTION = 2;
+
+/// Used to calculate the mipmap count of the HiZ map.
+const U HIERARCHICAL_Z_MIN_HEIGHT = 80;
 
 const TextureSubresourceInfo HIZ_HALF_DEPTH(TextureSurfaceInfo(0, 0, 0, 0));
 const TextureSubresourceInfo HIZ_QUARTER_DEPTH(TextureSurfaceInfo(1, 0, 0, 0));
@@ -81,7 +86,7 @@ inline void computeLinearizeDepthOptimal(F32 near, F32 far, F32& a, F32& b)
 	b = far / near;
 }
 
-const U GBUFFER_COLOR_ATTACHMENT_COUNT = 3;
+const U GBUFFER_COLOR_ATTACHMENT_COUNT = 4;
 
 /// Downsample and blur down to a texture with size DOWNSCALE_BLUR_DOWN_TO
 const U DOWNSCALE_BLUR_DOWN_TO = 32;
@@ -91,7 +96,7 @@ const U AVERAGE_LUMINANCE_RENDER_TARGET_SIZE = 128;
 
 extern const Array<Format, GBUFFER_COLOR_ATTACHMENT_COUNT> MS_COLOR_ATTACHMENT_PIXEL_FORMATS;
 
-const Format GBUFFER_DEPTH_ATTACHMENT_PIXEL_FORMAT = Format::D24_UNORM_S8_UINT;
+const Format GBUFFER_DEPTH_ATTACHMENT_PIXEL_FORMAT = Format::D32_SFLOAT;
 
 const Format LIGHT_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT = Format::B10G11R11_UFLOAT_PACK32;
 

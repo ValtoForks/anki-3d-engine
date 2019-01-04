@@ -57,20 +57,34 @@ Error BufferImpl::init(const BufferInitInfo& inf)
 
 	if(access == BufferMapAccessBit::WRITE)
 	{
-		// Only write
+		// Only write, probably for uploads
+
+		VkMemoryPropertyFlags preferDeviceLocal;
+		VkMemoryPropertyFlags avoidDeviceLocal;
+		if((usage & (~BufferUsageBit::TRANSFER_ALL)) != BufferUsageBit::NONE)
+		{
+			// Will be used for something other than transfer, try to put it in the device
+			preferDeviceLocal = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+			avoidDeviceLocal = 0;
+		}
+		else
+		{
+			// Will be used only for transfers, don't want it in the device
+			preferDeviceLocal = 0;
+			avoidDeviceLocal = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+		}
 
 		// Device & host & coherent but not cached
 		memIdx = getGrManagerImpl().getGpuMemoryManager().findMemoryType(req.memoryTypeBits,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-				| VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | preferDeviceLocal,
+			VK_MEMORY_PROPERTY_HOST_CACHED_BIT | avoidDeviceLocal);
 
 		// Fallback: host & coherent and not cached
 		if(memIdx == MAX_U32)
 		{
 			memIdx = getGrManagerImpl().getGpuMemoryManager().findMemoryType(req.memoryTypeBits,
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-				VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+				VK_MEMORY_PROPERTY_HOST_CACHED_BIT | avoidDeviceLocal);
 		}
 
 		// Fallback: just host
@@ -133,9 +147,10 @@ Error BufferImpl::init(const BufferInitInfo& inf)
 	getGrManagerImpl().getGpuMemoryManager().allocateMemory(memIdx, req.size, req.alignment, true, m_memHandle);
 
 	// Bind mem to buffer
-	ANKI_TRACE_START_EVENT(VK_BIND_OBJECT);
-	ANKI_VK_CHECK(vkBindBufferMemory(getDevice(), m_handle, m_memHandle.m_memory, m_memHandle.m_offset));
-	ANKI_TRACE_STOP_EVENT(VK_BIND_OBJECT);
+	{
+		ANKI_TRACE_SCOPED_EVENT(VK_BIND_OBJECT);
+		ANKI_VK_CHECK(vkBindBufferMemory(getDevice(), m_handle, m_memHandle.m_memory, m_memHandle.m_offset));
+	}
 
 	m_access = access;
 	m_size = inf.m_size;
@@ -208,7 +223,7 @@ VkPipelineStageFlags BufferImpl::computePplineStage(BufferUsageBit usage)
 					 | VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT | VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
 	}
 
-	if(!!(usage & BufferUsageBit::INDIRECT))
+	if(!!(usage & BufferUsageBit::INDIRECT_ALL))
 	{
 		stageMask |= VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
 	}
@@ -271,7 +286,7 @@ VkAccessFlags BufferImpl::computeAccessMask(BufferUsageBit usage)
 		mask |= VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
 	}
 
-	if(!!(usage & BufferUsageBit::INDIRECT))
+	if(!!(usage & BufferUsageBit::INDIRECT_ALL))
 	{
 		mask |= VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
 	}

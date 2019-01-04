@@ -38,8 +38,6 @@ public:
 
 	GpuMemoryHandle m_memHandle;
 
-	U32 m_surfaceOrVolumeCount = 0;
-
 	VkFormat m_vkFormat = VK_FORMAT_UNDEFINED;
 
 	TextureImplWorkaround m_workarounds = TextureImplWorkaround::NONE;
@@ -53,7 +51,15 @@ public:
 
 	~TextureImpl();
 
-	ANKI_USE_RESULT Error init(const TextureInitInfo& init);
+	ANKI_USE_RESULT Error init(const TextureInitInfo& init)
+	{
+		return initInternal(VK_NULL_HANDLE, init);
+	}
+
+	ANKI_USE_RESULT Error initExternal(VkImage image, const TextureInitInfo& init)
+	{
+		return initInternal(image, init);
+	}
 
 	Bool aspectValid(DepthStencilAspectBit aspect) const
 	{
@@ -93,6 +99,10 @@ public:
 
 	Bool usageValid(TextureUsageBit usage) const
 	{
+#if ANKI_ASSERTS_ENABLED
+		LockGuard<SpinLock> lock(m_usedForMtx);
+		m_usedFor |= usage;
+#endif
 		return (usage & m_usage) == usage;
 	}
 
@@ -146,6 +156,11 @@ private:
 
 	VkDeviceMemory m_dedicatedMem = VK_NULL_HANDLE;
 
+#if ANKI_ASSERTS_ENABLED
+	mutable TextureUsageBit m_usedFor = TextureUsageBit::NONE;
+	mutable SpinLock m_usedForMtx;
+#endif
+
 	ANKI_USE_RESULT static VkFormatFeatureFlags calcFeatures(const TextureInitInfo& init);
 
 	ANKI_USE_RESULT static VkImageCreateFlags calcCreateFlags(const TextureInitInfo& init);
@@ -166,6 +181,8 @@ private:
 		ANKI_ASSERT(isSubresourceValid(subresource));
 		return (textureTypeIsCube(m_texType) && subresource.m_faceCount != 6) ? TextureType::_2D : m_texType;
 	}
+
+	ANKI_USE_RESULT Error initInternal(VkImage externalImage, const TextureInitInfo& init);
 };
 /// @}
 

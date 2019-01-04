@@ -7,7 +7,7 @@
 #include <anki/scene/SceneGraph.h>
 #include <anki/scene/components/BodyComponent.h>
 #include <anki/scene/components/SkinComponent.h>
-#include <anki/scene/Misc.h>
+#include <anki/scene/components/RenderComponent.h>
 #include <anki/resource/ModelResource.h>
 #include <anki/resource/ResourceManager.h>
 #include <anki/resource/SkeletonResource.h>
@@ -16,126 +16,16 @@
 namespace anki
 {
 
-/// Render component implementation.
-class ModelPatchNode::MRenderComponent : public RenderComponent
-{
-public:
-	const ModelPatchNode& getNode() const
-	{
-		return static_cast<const ModelPatchNode&>(getSceneNode());
-	}
-
-	MRenderComponent(ModelPatchNode* node)
-		: RenderComponent(node, node->m_modelPatch->getMaterial())
-	{
-	}
-
-	void setupRenderableQueueElement(RenderableQueueElement& el) const override
-	{
-		getNode().setupRenderableQueueElement(el);
-	}
-};
-
-ModelPatchNode::ModelPatchNode(SceneGraph* scene, CString name)
-	: SceneNode(scene, name)
-{
-}
-
-ModelPatchNode::~ModelPatchNode()
-{
-}
-
-Error ModelPatchNode::init(const ModelPatch* modelPatch, U idx, const ModelNode& parent)
-{
-	ANKI_ASSERT(modelPatch);
-
-	m_modelPatch = modelPatch;
-
-	// Spatial component
-	newComponent<SpatialComponent>(this, &m_obb);
-
-	// Render component
-	newComponent<MRenderComponent>(this);
-
-	// Merge key
-	Array<U64, 2> toHash;
-	toHash[0] = idx;
-	toHash[1] = parent.m_model->getUuid();
-	m_mergeKey = computeHash(&toHash[0], sizeof(toHash));
-
-	return Error::NONE;
-}
-
-void ModelPatchNode::drawCallback(RenderQueueDrawContext& ctx, ConstWeakArray<void*> userData)
-{
-	ANKI_ASSERT(userData.getSize() > 0 && userData.getSize() <= MAX_INSTANCES);
-	ANKI_ASSERT(ctx.m_key.m_instanceCount == userData.getSize());
-
-	const ModelPatchNode& self = *static_cast<const ModelPatchNode*>(userData[0]);
-
-	CommandBufferPtr& cmdb = ctx.m_commandBuffer;
-
-	// That will not work on multi-draw and instanced at the same time. Make sure that there is no multi-draw anywhere
-	ANKI_ASSERT(self.m_modelPatch->getSubMeshCount() == 1);
-
-	ModelRenderingInfo modelInf;
-	self.m_modelPatch->getRenderingDataSub(ctx.m_key, WeakArray<U8>(), modelInf);
-
-	// Program
-	cmdb->bindShaderProgram(modelInf.m_program);
-
-	// Set attributes
-	for(U i = 0; i < modelInf.m_vertexAttributeCount; ++i)
-	{
-		const VertexAttributeInfo& attrib = modelInf.m_vertexAttributes[i];
-		cmdb->setVertexAttribute(
-			U32(attrib.m_location), attrib.m_bufferBinding, attrib.m_format, attrib.m_relativeOffset);
-	}
-
-	// Set vertex buffers
-	for(U i = 0; i < modelInf.m_vertexBufferBindingCount; ++i)
-	{
-		const VertexBufferBinding& binding = modelInf.m_vertexBufferBindings[i];
-		cmdb->bindVertexBuffer(i, binding.m_buffer, binding.m_offset, binding.m_stride, VertexStepRate::VERTEX);
-	}
-
-	// Index buffer
-	cmdb->bindIndexBuffer(modelInf.m_indexBuffer, 0, IndexType::U16);
-
-	// Uniforms
-	Array<Mat4, MAX_INSTANCES> trfs;
-	trfs[0] = Mat4(self.getParent()->getComponentAt<MoveComponent>(0).getWorldTransform());
-	for(U i = 1; i < userData.getSize(); ++i)
-	{
-		const ModelPatchNode& self2 = *static_cast<const ModelPatchNode*>(userData[i]);
-		trfs[i] = Mat4(self2.getParent()->getComponentAt<MoveComponent>(0).getWorldTransform());
-	}
-
-	self.getComponentAt<RenderComponent>(1).allocateAndSetupUniforms(
-		self.m_modelPatch->getMaterial()->getDescriptorSetIndex(),
-		ctx,
-		ConstWeakArray<Mat4>(&trfs[0], userData.getSize()),
-		*ctx.m_stagingGpuAllocator);
-
-	// Draw
-	cmdb->drawElements(PrimitiveTopology::TRIANGLES,
-		modelInf.m_indicesCountArray[0],
-		userData.getSize(),
-		modelInf.m_indicesOffsetArray[0] / sizeof(U16),
-		0,
-		0);
-}
-
 /// Feedback component.
 class ModelNode::MoveFeedbackComponent : public SceneComponent
 {
 public:
-	MoveFeedbackComponent(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	MoveFeedbackComponent()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	ANKI_USE_RESULT Error update(SceneNode& node, Second, Second, Bool& updated) override
+	ANKI_USE_RESULT Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 
@@ -150,11 +40,11 @@ public:
 	}
 };
 
-class ModelNode::MRenderComponent : public RenderComponent
+class ModelNode::MyRenderComponent : public MaterialRenderComponent
 {
 public:
-	MRenderComponent(ModelNode* node)
-		: RenderComponent(node, node->m_model->getModelPatches()[0]->getMaterial())
+	MyRenderComponent(ModelNode* node)
+		: MaterialRenderComponent(node, node->m_model->getModelPatches()[node->m_modelPatchIdx]->getMaterial())
 	{
 	}
 
@@ -171,106 +61,122 @@ ModelNode::ModelNode(SceneGraph* scene, CString name)
 
 ModelNode::~ModelNode()
 {
-	m_modelPatches.destroy(getSceneAllocator());
+}
+
+Error ModelNode::init(ModelResourcePtr resource, U32 modelPatchIdx)
+{
+	ANKI_ASSERT(modelPatchIdx < resource->getModelPatches().getSize());
+
+	ANKI_CHECK(getResourceManager().loadResource("shaders/SceneDebug.glslp", m_dbgProg));
+	m_model = resource;
+	m_modelPatchIdx = modelPatchIdx;
+
+	// Merge key
+	Array<U64, 2> toHash;
+	toHash[0] = modelPatchIdx;
+	toHash[1] = resource->getUuid();
+	m_mergeKey = computeHash(&toHash[0], sizeof(toHash));
+
+	// Components
+	if(m_model->getSkeleton().isCreated())
+	{
+		newComponent<SkinComponent>(this, m_model->getSkeleton());
+	}
+	newComponent<MoveComponent>();
+	newComponent<MoveFeedbackComponent>();
+	newComponent<SpatialComponent>(this, &m_obb);
+	newComponent<MyRenderComponent>(this);
+
+	return Error::NONE;
 }
 
 Error ModelNode::init(const CString& modelFname)
 {
-	ANKI_CHECK(getResourceManager().loadResource(modelFname, m_model));
+	ModelResourcePtr model;
+	ANKI_CHECK(getResourceManager().loadResource(modelFname, model));
 
-	if(m_model->getModelPatches().getSize() > 1)
+	// Init this
+	ANKI_CHECK(init(model, 0));
+
+	// Create separate nodes for the model patches and make the children
+	for(U i = 1; i < model->getModelPatches().getSize(); ++i)
 	{
-		// Multiple patches, create multiple nodes
+		ModelNode* other;
+		ANKI_CHECK(getSceneGraph().newSceneNode(CString(), other, model, i));
 
-		m_modelPatches.create(getSceneAllocator(), m_model->getModelPatches().getSize(), nullptr);
-
-		U count = 0;
-		auto it = m_model->getModelPatches().getBegin();
-		auto end = m_model->getModelPatches().getEnd();
-		for(; it != end; it++)
-		{
-			ModelPatchNode* mpn;
-			StringAuto nname(getFrameAllocator());
-			ANKI_CHECK(getSceneGraph().newSceneNode(CString(), mpn, *it, count, *this));
-
-			m_modelPatches[count++] = mpn;
-			addChild(mpn);
-		}
-
-		// Move component
-		newComponent<MoveComponent>(this);
-
-		// Feedback component
-		newComponent<MoveFeedbackComponent>(this);
+		addChild(other);
 	}
-	else
-	{
-		// Only one patch, don't need to create multiple nodes. Pack everything in this one.
-
-		m_mergeKey = m_model->getUuid();
-
-		if(m_model->getSkeleton().isCreated())
-		{
-			newComponent<SkinComponent>(this, m_model->getSkeleton());
-		}
-		newComponent<MoveComponent>(this);
-		newComponent<MoveFeedbackComponent>(this);
-		newComponent<SpatialComponent>(this, &m_obb);
-		newComponent<MRenderComponent>(this);
-	}
-
-	ANKI_CHECK(getResourceManager().loadResource("programs/SceneDebug.ankiprog", m_dbgProg));
 
 	return Error::NONE;
 }
 
 void ModelNode::onMoveComponentUpdate(const MoveComponent& move)
 {
-	if(!isSinglePatch())
-	{
-		// Inform the children about the moves
-		for(ModelPatchNode* child : m_modelPatches)
-		{
-			child->m_obb = child->m_modelPatch->getBoundingShape().getTransformed(move.getWorldTransform());
+	m_obb = m_model->getModelPatches()[m_modelPatchIdx]->getBoundingShape().getTransformed(move.getWorldTransform());
 
-			SpatialComponent& sp = child->getComponent<SpatialComponent>();
-			sp.markForUpdate();
-			sp.setSpatialOrigin(move.getWorldTransform().getOrigin());
-		}
-	}
-	else
-	{
-		m_obb = m_model->getModelPatches()[0]->getBoundingShape().getTransformed(move.getWorldTransform());
-
-		SpatialComponent& sp = getComponent<SpatialComponent>();
-		sp.markForUpdate();
-		sp.setSpatialOrigin(move.getWorldTransform().getOrigin());
-	}
+	SpatialComponent& sp = getComponent<SpatialComponent>();
+	sp.markForUpdate();
+	sp.setSpatialOrigin(move.getWorldTransform().getOrigin());
 }
 
-void ModelNode::drawCallback(RenderQueueDrawContext& ctx, ConstWeakArray<void*> userData)
+void ModelNode::draw(RenderQueueDrawContext& ctx, ConstWeakArray<void*> userData) const
 {
 	ANKI_ASSERT(userData.getSize() > 0 && userData.getSize() <= MAX_INSTANCES);
 	ANKI_ASSERT(ctx.m_key.m_instanceCount == userData.getSize());
 
 	CommandBufferPtr& cmdb = ctx.m_commandBuffer;
 
-	const ModelNode& self = *static_cast<const ModelNode*>(userData[0]);
-	ANKI_ASSERT(self.isSinglePatch());
-
 	if(!ctx.m_debugDraw)
 	{
-		const ModelPatch* patch = self.m_model->getModelPatches()[0];
+		const ModelPatch* patch = m_model->getModelPatches()[m_modelPatchIdx];
 
 		// That will not work on multi-draw and instanced at the same time. Make sure that there is no multi-draw
 		// anywhere
 		ANKI_ASSERT(patch->getSubMeshCount() == 1);
 
+		// Transforms
+		Array<Mat4, MAX_INSTANCES> trfs;
+		Array<Mat4, MAX_INSTANCES> prevTrfs;
+		const MoveComponent& movec = getComponent<MoveComponent>();
+		trfs[0] = Mat4(movec.getWorldTransform());
+		prevTrfs[0] = Mat4(movec.getPreviousWorldTransform());
+		Bool moved = trfs[0] != prevTrfs[0];
+		for(U i = 1; i < userData.getSize(); ++i)
+		{
+			const ModelNode& self2 = *static_cast<const ModelNode*>(userData[i]);
+			const MoveComponent& movec = self2.getComponent<MoveComponent>();
+			trfs[i] = Mat4(movec.getWorldTransform());
+			prevTrfs[i] = Mat4(movec.getPreviousWorldTransform());
+
+			moved = moved || (trfs[i] != prevTrfs[i]);
+		}
+
+		// Bones storage
+		if(m_model->getSkeleton())
+		{
+			const SkinComponent& skinc = getComponentAt<SkinComponent>(0);
+			StagingGpuMemoryToken token;
+			void* trfs = ctx.m_stagingGpuAllocator->allocateFrame(
+				skinc.getBoneTransforms().getSize() * sizeof(Mat4), StagingGpuMemoryType::STORAGE, token);
+			memcpy(trfs, &skinc.getBoneTransforms()[0], skinc.getBoneTransforms().getSize() * sizeof(Mat4));
+
+			cmdb->bindStorageBuffer(0, 0, token.m_buffer, token.m_offset, token.m_range);
+		}
+
+		ctx.m_key.m_velocity = moved && ctx.m_key.m_pass == Pass::GB;
 		ModelRenderingInfo modelInf;
 		patch->getRenderingDataSub(ctx.m_key, WeakArray<U8>(), modelInf);
 
 		// Program
 		cmdb->bindShaderProgram(modelInf.m_program);
+
+		// Uniforms
+		static_cast<const MaterialRenderComponent&>(getComponent<RenderComponent>())
+			.allocateAndSetupUniforms(patch->getMaterial()->getDescriptorSetIndex(),
+				ctx,
+				ConstWeakArray<Mat4>(&trfs[0], userData.getSize()),
+				ConstWeakArray<Mat4>(&prevTrfs[0], userData.getSize()),
+				*ctx.m_stagingGpuAllocator);
 
 		// Set attributes
 		for(U i = 0; i < modelInf.m_vertexAttributeCount; ++i)
@@ -290,32 +196,6 @@ void ModelNode::drawCallback(RenderQueueDrawContext& ctx, ConstWeakArray<void*> 
 
 		// Index buffer
 		cmdb->bindIndexBuffer(modelInf.m_indexBuffer, 0, IndexType::U16);
-
-		// Uniforms
-		Array<Mat4, MAX_INSTANCES> trfs;
-		trfs[0] = Mat4(self.getComponent<MoveComponent>().getWorldTransform());
-		for(U i = 1; i < userData.getSize(); ++i)
-		{
-			const ModelNode& self2 = *static_cast<const ModelNode*>(userData[i]);
-			trfs[i] = Mat4(self2.getComponent<MoveComponent>().getWorldTransform());
-		}
-
-		self.getComponent<RenderComponent>().allocateAndSetupUniforms(patch->getMaterial()->getDescriptorSetIndex(),
-			ctx,
-			ConstWeakArray<Mat4>(&trfs[0], userData.getSize()),
-			*ctx.m_stagingGpuAllocator);
-
-		// Bones storage
-		if(self.m_model->getSkeleton())
-		{
-			const SkinComponent& skinc = self.getComponentAt<SkinComponent>(0);
-			StagingGpuMemoryToken token;
-			void* trfs = ctx.m_stagingGpuAllocator->allocateFrame(
-				skinc.getBoneTransforms().getSize() * sizeof(Mat4), StagingGpuMemoryType::STORAGE, token);
-			memcpy(trfs, &skinc.getBoneTransforms()[0], skinc.getBoneTransforms().getSize() * sizeof(Mat4));
-
-			cmdb->bindStorageBuffer(0, 0, token.m_buffer, token.m_offset, token.m_range);
-		}
 
 		// Draw
 		cmdb->drawElements(PrimitiveTopology::TRIANGLES,
@@ -406,13 +286,13 @@ void ModelNode::drawCallback(RenderQueueDrawContext& ctx, ConstWeakArray<void*> 
 		*color = Vec4(1.0f, 0.0f, 1.0f, 1.0f);
 
 		// Setup state
-		ShaderProgramResourceMutationInitList<2> mutators(self.m_dbgProg);
+		ShaderProgramResourceMutationInitList<2> mutators(m_dbgProg);
 		mutators.add("COLOR_TEXTURE", 0);
 		mutators.add("DITHERED_DEPTH_TEST", ctx.m_debugDrawFlags.get(RenderQueueDebugDrawFlag::DITHERED_DEPTH_TEST_ON));
-		ShaderProgramResourceConstantValueInitList<1> consts(self.m_dbgProg);
+		ShaderProgramResourceConstantValueInitList<1> consts(m_dbgProg);
 		consts.add("INSTANCE_COUNT", U32(userData.getSize()));
 		const ShaderProgramResourceVariant* variant;
-		self.m_dbgProg->getOrCreateVariant(mutators.get(), consts.get(), variant);
+		m_dbgProg->getOrCreateVariant(mutators.get(), consts.get(), variant);
 		cmdb->bindShaderProgram(variant->getProgram());
 
 		const Bool enableDepthTest = ctx.m_debugDrawFlags.get(RenderQueueDebugDrawFlag::DEPTH_TEST_ON);

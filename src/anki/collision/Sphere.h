@@ -49,7 +49,13 @@ public:
 
 	void setCenter(const Vec4& x)
 	{
+		ANKI_ASSERT(x.w() == 0.0f);
 		m_center = x;
+	}
+
+	void setCenter(const Vec3& x)
+	{
+		m_center = x.xyz0();
 	}
 
 	F32 getRadius() const
@@ -116,6 +122,9 @@ public:
 	/// Intersect a ray with the sphere. It will not return the points that are not part of the ray.
 	Bool intersectsRay(
 		const Vec4& rayDir, const Vec4& rayOrigin, Array<Vec4, 2>& intersectionPoints, U& intersectionPointCount) const;
+
+	/// https://bartwronski.com/2017/04/13/cull-that-cone/
+	Bool intersectsCone(const Vec4& coneOrigin, const Vec4& coneDir, F32 coneLength, F32 coneAngle) const;
 
 private:
 	Vec4 m_center;

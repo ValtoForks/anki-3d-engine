@@ -10,11 +10,16 @@
 #include <anki/util/Ptr.h>
 #include <anki/Math.h>
 
-// Have all the newton headers here because they polute the global namespace
-#include <Newton.h>
-#include <dLinearAlgebra.h>
-#include <dCustomPlayerControllerManager.h>
-#include <anki/util/CleanupWindows.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wall"
+#define BT_THREADSAFE 0
+#define BT_NO_PROFILE 1
+#include <btBulletCollisionCommon.h>
+#include <btBulletDynamicsCommon.h>
+#include <BulletCollision/CollisionDispatch/btGhostObject.h>
+#include <BulletDynamics/Character/btKinematicCharacterController.h>
+#include <BulletCollision/Gimpact/btGImpactShape.h>
+#pragma GCC diagnostic pop
 
 namespace anki
 {
@@ -26,10 +31,13 @@ namespace anki
 
 // Forward
 class PhysicsObject;
+class PhysicsFilteredObject;
 class PhysicsWorld;
 class PhysicsCollisionShape;
 class PhysicsBody;
 class PhysicsPlayerController;
+class PhysicsJoint;
+class PhysicsTrigger;
 
 /// @addtogroup physics
 /// @{
@@ -45,43 +53,116 @@ public:
 template<typename T>
 using PhysicsPtr = IntrusivePtr<T, PhysicsPtrDeleter>;
 
+using PhysicsObjectPtr = PhysicsPtr<PhysicsObject>;
+using PhysicsFilteredObjectPtr = PhysicsPtr<PhysicsFilteredObject>;
 using PhysicsCollisionShapePtr = PhysicsPtr<PhysicsCollisionShape>;
 using PhysicsBodyPtr = PhysicsPtr<PhysicsBody>;
 using PhysicsPlayerControllerPtr = PhysicsPtr<PhysicsPlayerController>;
+using PhysicsJointPtr = PhysicsPtr<PhysicsJoint>;
+using PhysicsTriggerPtr = PhysicsPtr<PhysicsTrigger>;
 
 /// Material types.
-enum class PhysicsMaterialBit : U16
+enum class PhysicsMaterialBit : U64
 {
 	NONE = 0,
 	STATIC_GEOMETRY = 1 << 0,
 	DYNAMIC_GEOMETRY = 1 << 1,
-	RAGDOLL = 1 << 2,
-	PARTICLES = 1 << 3,
-	ALL = MAX_U16
+	TRIGGER = 1 << 2,
+	PLAYER = 1 << 3,
+	PARTICLE = 1 << 4,
+
+	ALL = MAX_U64
 };
 ANKI_ENUM_ALLOW_NUMERIC_OPERATIONS(PhysicsMaterialBit, inline)
 
-ANKI_USE_RESULT inline Vec4 toAnki(const dVector& v)
+ANKI_USE_RESULT inline Vec3 toAnki(const btVector3& v)
 {
-	return Vec4(v.m_x, v.m_y, v.m_z, v.m_w);
+	return Vec3(v.getX(), v.getY(), v.getZ());
 }
 
-ANKI_USE_RESULT inline dVector toNewton(const Vec4& v)
+ANKI_USE_RESULT inline btVector3 toBt(const Vec3& v)
 {
-	return dVector(v.x(), v.y(), v.z(), v.w());
+	return btVector3(v.x(), v.y(), v.z());
 }
 
-ANKI_USE_RESULT inline Mat4 toAnki(const dMatrix& m)
+ANKI_USE_RESULT inline btTransform toBt(const Transform& a)
 {
-	Mat4 ak(*reinterpret_cast<const Mat4*>(&m));
-	return ak.getTransposed();
+	Mat4 mat(a);
+	mat.transpose();
+	btTransform out;
+	out.setFromOpenGLMatrix(&mat(0, 0));
+	return out;
 }
 
-ANKI_USE_RESULT inline dMatrix toNewton(const Mat4& m)
+ANKI_USE_RESULT inline Mat3x4 toAnki(const btMatrix3x3& m)
 {
-	Mat4 transp = m.getTransposed();
-	return dMatrix(&transp(0, 0));
+	Mat3x4 m3;
+	m3.setRows(Vec4(toAnki(m[0]), 0.0f), Vec4(toAnki(m[1]), 0.0f), Vec4(toAnki(m[2]), 0.0f));
+	return m3;
 }
+
+ANKI_USE_RESULT inline Transform toAnki(const btTransform& t)
+{
+	Transform out;
+	out.setRotation(toAnki(t.getBasis()));
+	out.setOrigin(Vec4(toAnki(t.getOrigin()), 0.0f));
+	out.setScale(1.0f);
+	return out;
+}
+
+/// A wrapper template to compensate for of the fact that Bullet classes get initialized in the constructor.
+template<typename TBtClass>
+class BtClassWrapper
+{
+public:
+	BtClassWrapper()
+	{
+	}
+
+	template<typename... TArgs>
+	void init(TArgs&&... args)
+	{
+		::new(&m_data[0]) TBtClass(std::forward<TArgs>(args)...);
+	}
+
+	void destroy()
+	{
+		reinterpret_cast<TBtClass*>(&m_data[0])->~TBtClass();
+	}
+
+	TBtClass* operator->()
+	{
+		return reinterpret_cast<TBtClass*>(&m_data[0]);
+	}
+
+	const TBtClass* operator->() const
+	{
+		return reinterpret_cast<const TBtClass*>(&m_data[0]);
+	}
+
+	TBtClass& operator*()
+	{
+		return *reinterpret_cast<TBtClass*>(&m_data[0]);
+	}
+
+	const TBtClass& operator*() const
+	{
+		return *reinterpret_cast<const TBtClass*>(&m_data[0]);
+	}
+
+	TBtClass* get()
+	{
+		return reinterpret_cast<TBtClass*>(&m_data[0]);
+	}
+
+	const TBtClass* get() const
+	{
+		return reinterpret_cast<const TBtClass*>(&m_data[0]);
+	}
+
+private:
+	alignas(alignof(TBtClass)) Array<U8, sizeof(TBtClass)> m_data;
+};
 /// @}
 
 } // end namespace anki

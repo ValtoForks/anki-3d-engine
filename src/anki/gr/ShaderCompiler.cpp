@@ -11,6 +11,7 @@
 #include <anki/core/Trace.h>
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
+#include <glslang/StandAlone/DirStackFileIncluder.h>
 #include <SPIRV-Cross/spirv_glsl.hpp>
 
 namespace anki
@@ -31,32 +32,68 @@ static const Array<const char*, U(ShaderType::COUNT)> SHADER_NAME = {
 
 static const char* SHADER_HEADER = R"(#version 450 core
 #define ANKI_BACKEND_%s 1
+#define ANKI_BACKEND_MINOR %u
+#define ANKI_BACKEND_MAJOR %u
 #define ANKI_VENDOR_%s 1
 #define ANKI_%s_SHADER 1
 
-#if defined(ANKI_BACKEND_GL) 
-#	define ANKI_UBO_BINDING(set_, binding_) binding = set_ * %u + binding_
-#	define ANKI_SS_BINDING(set_, binding_) binding = set_ * %u + binding_
-#	define ANKI_TEX_BINDING(set_, binding_) binding = set_ * %u + binding_
-#	define ANKI_IMAGE_BINDING(set_, binding_) binding = set_ * %u + binding_
+#if defined(ANKI_BACKEND_GL)
+#	define ANKI_UBO_BINDING(set_, binding_) binding = (set_) * (%u) + (binding_)
+#	define ANKI_SS_BINDING(set_, binding_) binding = (set_) * (%u) + (binding_)
+#	define ANKI_TEX_BINDING(set_, binding_) binding = (set_) * (%u) + (binding_)
+#	define ANKI_IMAGE_BINDING(set_, binding_) binding = (set_) * (%u) + (binding_)
 #	define ANKI_SPEC_CONST(binding_, type_, name_) const type_ name_ = _anki_spec_const_ ## binding_
-#	define ANKI_PUSH_CONSTANTS(struct_, name_) layout(location = %u, row_major) uniform struct_ name_
+#	define ANKI_PUSH_CONSTANTS(struct_, name_) layout(location = (%u)) uniform struct_ name_
+
+#	define ANKI_UNROLL
+#	define ANKI_LOOP
+#	define ANKI_BRANCH
+#	define ANKI_FLATTEN
 #else
 #	define gl_VertexID gl_VertexIndex
 #	define gl_InstanceID gl_InstanceIndex
-#	define ANKI_TEX_BINDING(set_, binding_) set = set_, binding = %u + binding_
-#	define ANKI_UBO_BINDING(set_, binding_) set = set_, binding = %u + binding_
-#	define ANKI_SS_BINDING(set_, binding_) set = set_, binding = %u + binding_
-#	define ANKI_IMAGE_BINDING(set_, binding_) set = set_, binding = %u + binding_
-#	define ANKI_SPEC_CONST(binding_, type_, name_) layout(constant_id = binding_) const type_ name_ = type_(0)
+#	define ANKI_TEX_BINDING(set_, binding_) set = (set_), binding = (%u) + (binding_)
+#	define ANKI_UBO_BINDING(set_, binding_) set = (set_), binding = (%u) + (binding_)
+#	define ANKI_SS_BINDING(set_, binding_) set = (set_), binding = (%u) + (binding_)
+#	define ANKI_IMAGE_BINDING(set_, binding_) set = (set_), binding = (%u) + (binding_)
+#	define ANKI_SPEC_CONST(binding_, type_, name_) layout(constant_id = (binding_)) const type_ name_ = type_(0)
 #	define ANKI_PUSH_CONSTANTS(struct_, name_) layout(push_constant, row_major, std140) \
 		uniform pushConst_ {struct_ name_;}
+
+#	extension GL_EXT_control_flow_attributes : require
+#	define ANKI_UNROLL [[unroll]]
+#	define ANKI_LOOP [[dont_unroll]]
+#	define ANKI_BRANCH [[branch]]
+#	define ANKI_FLATTEN [[flatten]]
+
+#	if ANKI_BACKEND_MAJOR == 1 && ANKI_BACKEND_MINOR >= 1
+#		extension GL_KHR_shader_subgroup_vote : require
+#		extension GL_KHR_shader_subgroup_ballot : require
+#		extension GL_KHR_shader_subgroup_shuffle : require
+#		extension GL_KHR_shader_subgroup_arithmetic : require
+#	endif
 #endif
 
-#if %u
-#	extension GL_ARB_shader_ballot : require
-#	define ANKI_ARB_SHADER_BALLOT 1
-#endif
+#define F32 float
+#define Vec2 vec2
+#define Vec3 vec3
+#define Vec4 vec4
+
+#define U32 uint
+#define UVec2 uvec2
+#define UVec3 uvec3
+#define UVec4 uvec4
+
+#define I32 int
+#define IVec2 ivec2
+#define IVec3 ivec3
+#define IVec4 ivec4
+
+#define Mat3 mat3
+#define Mat4 mat4
+#define Mat3x4 mat3x4
+
+#define Bool bool
 
 %s)";
 
@@ -214,9 +251,20 @@ static ANKI_USE_RESULT Error genSpirv(const ShaderCompiler::BuildContext& ctx, s
 	}
 
 	// Setup the shader
+	glslang::EShTargetLanguageVersion langVersion;
+	if(ctx.m_options.m_outLanguage == ShaderLanguage::SPIRV && ctx.m_options.m_gpuCapabilities.m_minorApiVersion > 0)
+	{
+		langVersion = glslang::EShTargetSpv_1_3;
+	}
+	else
+	{
+		langVersion = glslang::EShTargetSpv_1_0;
+	}
+
 	glslang::TShader shader(stage);
 	Array<const char*, 1> csrc = {{&ctx.m_src[0]}};
 	shader.setStrings(&csrc[0], 1);
+	shader.setEnvTarget(glslang::EShTargetSpv, langVersion);
 	if(!shader.parse(&GLSLANG_LIMITS, 100, false, messages))
 	{
 		ShaderCompiler::logShaderErrorCode(shader.getInfoLog(), ctx.m_src, ctx.m_alloc);
@@ -236,7 +284,28 @@ static ANKI_USE_RESULT Error genSpirv(const ShaderCompiler::BuildContext& ctx, s
 	// Gen SPIRV
 	glslang::SpvOptions spvOptions;
 	spvOptions.optimizeSize = true;
+	spvOptions.disableOptimizer = false;
 	glslang::GlslangToSpv(*program.getIntermediate(stage), spirv, &spvOptions);
+
+	return Error::NONE;
+}
+
+/// Just run the preprocessor.
+static ANKI_USE_RESULT Error preprocess(const ShaderCompiler::BuildContext& ctx, std::string& src)
+{
+	const EShLanguage stage = ankiToGlslangShaderType(ctx.m_options.m_shaderType);
+
+	glslang::TShader shader(stage);
+	Array<const char*, 1> csrc = {{&ctx.m_src[0]}};
+	shader.setStrings(&csrc[0], 1);
+
+	DirStackFileIncluder includer;
+	EShMessages messages = EShMsgDefault;
+	if(!shader.preprocess(&GLSLANG_LIMITS, 450, ENoProfile, false, false, messages, &src, includer))
+	{
+		ShaderCompiler::logShaderErrorCode(shader.getInfoLog(), ctx.m_src, ctx.m_alloc);
+		return Error::USER_DATA;
+	}
 
 	return Error::NONE;
 }
@@ -289,21 +358,21 @@ Error ShaderCompiler::compile(CString source, const ShaderCompilerOptions& optio
 
 	fullSrc.sprintf(SHADER_HEADER,
 		(options.m_outLanguage == ShaderLanguage::GLSL) ? "GL" : "VULKAN",
+		options.m_gpuCapabilities.m_minorApiVersion,
+		options.m_gpuCapabilities.m_majorApiVersion,
 		&GPU_VENDOR_STR[options.m_gpuCapabilities.m_gpuVendor][0],
 		SHADER_NAME[options.m_shaderType],
 		// GL bindings
 		MAX_UNIFORM_BUFFER_BINDINGS,
 		MAX_STORAGE_BUFFER_BINDINGS,
 		MAX_TEXTURE_BINDINGS,
-		MAX_IMAGE_BINDINGS,
-		MAX_TEXTURE_BINDINGS * MAX_DESCRIPTOR_SETS, // Push constant location
+		MAX_IMAGE_BINDINGS, // Images
+		(MAX_TEXTURE_BINDINGS + MAX_IMAGE_BINDINGS) * MAX_DESCRIPTOR_SETS, // Push constant location
 		// VK bindings
 		0,
 		MAX_TEXTURE_BINDINGS,
 		MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS,
 		MAX_TEXTURE_BINDINGS + MAX_UNIFORM_BUFFER_BINDINGS + MAX_STORAGE_BUFFER_BINDINGS,
-		// Ballot
-		!!(options.m_gpuCapabilities.m_shaderSubgroups) ? 1u : 0u,
 		&source[0]);
 
 	ctx.m_src = fullSrc.toCString();
@@ -323,8 +392,13 @@ Error ShaderCompiler::compile(CString source, const ShaderCompilerOptions& optio
 			memcpy(&bin[0], &newSrc[0], bin.getSize());
 		}
 #else
-		bin.resize(fullSrc.getLength() + 1);
-		memcpy(&bin[0], &fullSrc[0], bin.getSize());
+		// Preprocess the source because MESA sucks and can't do it
+		std::string preprocessedSrc;
+		ANKI_CHECK(preprocess(ctx, preprocessedSrc));
+		ANKI_ASSERT(preprocessedSrc.length() > 0);
+
+		bin.resize(preprocessedSrc.length() + 1);
+		memcpy(&bin[0], &preprocessedSrc[0], bin.getSize());
 #endif
 	}
 	else

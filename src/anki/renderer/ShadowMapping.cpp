@@ -9,7 +9,7 @@
 #include <anki/core/App.h>
 #include <anki/core/Trace.h>
 #include <anki/misc/ConfigSet.h>
-#include <anki/util/ThreadPool.h>
+#include <anki/util/ThreadHive.h>
 
 namespace anki
 {
@@ -51,7 +51,6 @@ Error ShadowMapping::initScratch(const ConfigSet& cfg)
 		m_scratchRtDescr = m_r->create2DRenderTargetDescription(m_scratchTileResolution * m_scratchTileCount,
 			m_scratchTileResolution,
 			SHADOW_DEPTH_PIXEL_FORMAT,
-			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE,
 			"Scratch ShadMap");
 		m_scratchRtDescr.bake();
 
@@ -77,7 +76,8 @@ Error ShadowMapping::initEsm(const ConfigSet& cfg)
 		TextureInitInfo texinit = m_r->create2DRenderTargetInitInfo(m_atlasResolution,
 			m_atlasResolution,
 			SHADOW_COLOR_PIXEL_FORMAT,
-			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE,
+			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE
+				| TextureUsageBit::SAMPLED_COMPUTE,
 			"esm");
 		texinit.m_initialUsage = TextureUsageBit::SAMPLED_FRAGMENT;
 		ClearValue clearVal;
@@ -120,7 +120,7 @@ Error ShadowMapping::initEsm(const ConfigSet& cfg)
 	// Programs and shaders
 	{
 		ANKI_CHECK(
-			getResourceManager().loadResource("programs/ExponentialShadowmappingResolve.ankiprog", m_esmResolveProg));
+			getResourceManager().loadResource("shaders/ExponentialShadowmappingResolve.glslp", m_esmResolveProg));
 
 		ShaderProgramResourceConstantValueInitList<1> consts(m_esmResolveProg);
 		consts.add("INPUT_TEXTURE_SIZE", UVec2(m_scratchTileCount * m_scratchTileResolution, m_scratchTileResolution));
@@ -144,7 +144,7 @@ Error ShadowMapping::initInternal(const ConfigSet& cfg)
 void ShadowMapping::runEsm(RenderPassWorkContext& rgraphCtx)
 {
 	ANKI_ASSERT(m_esmResolveWorkItems.getSize());
-	ANKI_TRACE_SCOPED_EVENT(RENDER_SM);
+	ANKI_TRACE_SCOPED_EVENT(R_SM);
 
 	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
 
@@ -154,7 +154,7 @@ void ShadowMapping::runEsm(RenderPassWorkContext& rgraphCtx)
 
 	for(const EsmResolveWorkItem& workItem : m_esmResolveWorkItems)
 	{
-		ANKI_TRACE_INC_COUNTER(RENDERER_SHADOW_PASSES, 1);
+		ANKI_TRACE_INC_COUNTER(R_SHADOW_PASSES, 1);
 
 		cmdb->setViewport(
 			workItem.m_viewportOut[0], workItem.m_viewportOut[1], workItem.m_viewportOut[2], workItem.m_viewportOut[3]);
@@ -175,7 +175,7 @@ void ShadowMapping::runEsm(RenderPassWorkContext& rgraphCtx)
 void ShadowMapping::runShadowMapping(RenderPassWorkContext& rgraphCtx)
 {
 	ANKI_ASSERT(m_scratchWorkItems.getSize());
-	ANKI_TRACE_SCOPED_EVENT(RENDER_SM);
+	ANKI_TRACE_SCOPED_EVENT(R_SM);
 
 	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
 	const U threadIdx = rgraphCtx.m_currentSecondLevelCommandBufferIndex;
@@ -194,6 +194,7 @@ void ShadowMapping::runShadowMapping(RenderPassWorkContext& rgraphCtx)
 		m_r->getSceneDrawer().drawRange(Pass::SM,
 			work.m_renderQueue->m_viewMatrix,
 			work.m_renderQueue->m_viewProjectionMatrix,
+			Mat4::getIdentity(), // Don't care about prev matrices here
 			cmdb,
 			work.m_renderQueue->m_renderables.getBegin() + work.m_firstRenderableElement,
 			work.m_renderQueue->m_renderables.getBegin() + work.m_firstRenderableElement
@@ -203,7 +204,7 @@ void ShadowMapping::runShadowMapping(RenderPassWorkContext& rgraphCtx)
 
 void ShadowMapping::populateRenderGraph(RenderingContext& ctx)
 {
-	ANKI_TRACE_SCOPED_EVENT(RENDER_SM);
+	ANKI_TRACE_SCOPED_EVENT(R_SM);
 
 	// First process the lights
 	U32 threadCountForScratchPass = 0;
@@ -226,32 +227,30 @@ void ShadowMapping::populateRenderGraph(RenderingContext& ctx)
 			m_scratchRt = rgraph.newRenderTarget(m_scratchRtDescr);
 			pass.setFramebufferInfo(m_scratchFbDescr, {}, m_scratchRt, minx, miny, width, height);
 			ANKI_ASSERT(
-				threadCountForScratchPass && threadCountForScratchPass <= m_r->getThreadPool().getThreadCount());
+				threadCountForScratchPass && threadCountForScratchPass <= m_r->getThreadHive().getThreadCount());
 			pass.setWork(runShadowmappingCallback, this, threadCountForScratchPass);
 
 			TextureSubresourceInfo subresource = TextureSubresourceInfo(DepthStencilAspectBit::DEPTH);
-			pass.newConsumer({m_scratchRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE, subresource});
-			pass.newProducer({m_scratchRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE, subresource});
+			pass.newDependency({m_scratchRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE, subresource});
 		}
 
 		// ESM pass
 		{
 			GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass("ESM");
 
-			m_esmRt = rgraph.importRenderTarget("ESM", m_esmAtlas, TextureUsageBit::SAMPLED_FRAGMENT);
+			m_esmRt = rgraph.importRenderTarget(m_esmAtlas, TextureUsageBit::SAMPLED_FRAGMENT);
 			pass.setFramebufferInfo(m_esmFbDescr, {{m_esmRt}}, {});
 			pass.setWork(runEsmCallback, this, 0);
 
-			pass.newConsumer(
+			pass.newDependency(
 				{m_scratchRt, TextureUsageBit::SAMPLED_FRAGMENT, TextureSubresourceInfo(DepthStencilAspectBit::DEPTH)});
-			pass.newConsumer({m_esmRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
-			pass.newProducer({m_esmRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
+			pass.newDependency({m_esmRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
 		}
 	}
 	else
 	{
 		// No need for shadowmapping passes, just import the ESM atlas
-		m_esmRt = rgraph.importRenderTarget("ESM", m_esmAtlas, TextureUsageBit::SAMPLED_FRAGMENT);
+		m_esmRt = rgraph.importRenderTarget(m_esmAtlas, TextureUsageBit::SAMPLED_FRAGMENT);
 	}
 }
 
@@ -293,6 +292,7 @@ void ShadowMapping::processLights(RenderingContext& ctx, U32& threadCountForScra
 		Array<U32, 6> scratchTiles;
 		Array<U64, 6> timestamps;
 		Array<U32, 6> faceIndices;
+		Array<U32, 6> drawcallCounts;
 		U numOfFacesThatHaveDrawcalls = 0;
 		for(U face = 0; face < 6; ++face)
 		{
@@ -305,6 +305,9 @@ void ShadowMapping::processLights(RenderingContext& ctx, U32& threadCountForScra
 				timestamps[numOfFacesThatHaveDrawcalls] =
 					light->m_shadowRenderQueues[face]->m_shadowRenderablesLastUpdateTimestamp;
 
+				drawcallCounts[numOfFacesThatHaveDrawcalls] =
+					light->m_shadowRenderQueues[face]->m_renderables.getSize();
+
 				++numOfFacesThatHaveDrawcalls;
 			}
 		}
@@ -313,6 +316,7 @@ void ShadowMapping::processLights(RenderingContext& ctx, U32& threadCountForScra
 											 numOfFacesThatHaveDrawcalls,
 											 &timestamps[0],
 											 &faceIndices[0],
+											 &drawcallCounts[0],
 											 &tiles[0],
 											 &scratchTiles[0]);
 
@@ -371,11 +375,13 @@ void ShadowMapping::processLights(RenderingContext& ctx, U32& threadCountForScra
 
 		// Allocate tiles
 		U32 tileIdx, scratchTileIdx, faceIdx = 0;
-		const Bool allocationFailed = light->m_shadowRenderQueue->m_renderables.getSize() == 0
+		const U32 localDrawcallCount = light->m_shadowRenderQueue->m_renderables.getSize();
+		const Bool allocationFailed = localDrawcallCount == 0
 									  || allocateTilesAndScratchTiles(light->m_uuid,
 											 1,
 											 &light->m_shadowRenderQueue->m_shadowRenderablesLastUpdateTimestamp,
 											 &faceIdx,
+											 &localDrawcallCount,
 											 &tileIdx,
 											 &scratchTileIdx);
 
@@ -412,7 +418,7 @@ void ShadowMapping::processLights(RenderingContext& ctx, U32& threadCountForScra
 		for(U taskId = 0; taskId < threadCount; ++taskId)
 		{
 			PtrSize start, end;
-			ThreadPoolTask::choseStartEnd(taskId, threadCount, drawcallCount, start, end);
+			splitThreadedProblem(taskId, threadCount, drawcallCount, start, end);
 
 			// While there are drawcalls in this task emit new work items
 			U taskDrawcallCount = end - start;
@@ -515,13 +521,14 @@ Bool ShadowMapping::allocateTilesAndScratchTiles(U64 lightUuid,
 	U32 faceCount,
 	const U64* faceTimestamps,
 	const U32* faceIndices,
+	const U32* drawcallsCount,
 	U32* tileIndices,
 	U32* scratchTileIndices)
 {
 	ANKI_ASSERT(faceTimestamps);
 	ANKI_ASSERT(lightUuid > 0);
 	ANKI_ASSERT(faceCount > 0 && faceCount <= 6);
-	ANKI_ASSERT(faceIndices && tileIndices && scratchTileIndices);
+	ANKI_ASSERT(faceIndices && tileIndices && scratchTileIndices && drawcallsCount);
 
 	Bool failed = false;
 	Array<Bool, 6> inTheCache;
@@ -550,8 +557,8 @@ Bool ShadowMapping::allocateTilesAndScratchTiles(U64 lightUuid,
 		for(U i = 0; i < faceCount && !failed; ++i)
 		{
 			scratchTileIndices[i] = MAX_U32;
-			const Bool shouldRender =
-				shouldRenderTile(faceTimestamps[i], lightUuid, faceIndices[i], m_tiles[tileIndices[i]]);
+			const Bool shouldRender = shouldRenderTile(
+				faceTimestamps[i], lightUuid, faceIndices[i], m_tiles[tileIndices[i]], drawcallsCount[i]);
 			const Bool scratchTileFailed = shouldRender && freeScratchTiles == 0;
 
 			if(scratchTileFailed)
@@ -583,6 +590,7 @@ Bool ShadowMapping::allocateTilesAndScratchTiles(U64 lightUuid,
 			tile.m_face = faceIndices[i];
 			tile.m_lightUuid = lightUuid;
 			tile.m_lastUsedTimestamp = m_r->getGlobalTimestamp();
+			tile.m_drawcallCount = drawcallsCount[i];
 
 			// Update the cache
 			if(!inTheCache[i])
@@ -597,13 +605,18 @@ Bool ShadowMapping::allocateTilesAndScratchTiles(U64 lightUuid,
 	return failed;
 }
 
-Bool ShadowMapping::shouldRenderTile(U64 lightTimestamp, U64 lightUuid, U32 face, const Tile& tileIdx)
+Bool ShadowMapping::shouldRenderTile(
+	U64 lightTimestamp, U64 lightUuid, U32 face, const Tile& tileIdx, U32 drawcallCount)
 {
-	if(tileIdx.m_face == face && tileIdx.m_lightUuid == lightUuid && tileIdx.m_lastUsedTimestamp >= lightTimestamp)
+	if(tileIdx.m_face == face && tileIdx.m_lightUuid == lightUuid && tileIdx.m_lastUsedTimestamp >= lightTimestamp
+		&& tileIdx.m_drawcallCount == drawcallCount)
 	{
 		return false;
 	}
-	return true;
+	else
+	{
+		return true;
+	}
 }
 
 Bool ShadowMapping::allocateTile(U64 lightTimestamp, U64 lightUuid, U32 face, U32& tileAllocated, Bool& inTheCache)

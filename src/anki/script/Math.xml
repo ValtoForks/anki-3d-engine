@@ -12,13 +12,16 @@
 namespace anki {]]></head>
 
 	<classes>
-		<class name="Vec2">
-			<constructor>
-				<args>
-					<arg>F32</arg>
-					<arg>F32</arg>
-				</args>
-			</constructor>
+		<class name="Vec2" serialize="true">
+			<constructors>
+				<constructor></constructor>
+				<constructor>
+					<args>
+						<arg>F32</arg>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+			</constructors>
 			<methods>
 				<method name="getX">
 					<overrideCall>F32 ret = (*self).x();</overrideCall>
@@ -111,14 +114,22 @@ namespace anki {]]></head>
 				</method>
 			</methods>
 		</class>
-		<class name="Vec3">
-			<constructor>
-				<args>
-					<arg>F32</arg>
-					<arg>F32</arg>
-					<arg>F32</arg>
-				</args>
-			</constructor>
+		<class name="Vec3" serialize="true">
+			<constructors>
+				<constructor></constructor>
+				<constructor>
+					<args>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+				<constructor>
+					<args>
+						<arg>F32</arg>
+						<arg>F32</arg>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+			</constructors>
 			<methods>
 				<method name="getX">
 					<overrideCall>F32 ret = (*self).x();</overrideCall>
@@ -223,15 +234,23 @@ namespace anki {]]></head>
 
 			</methods>
 		</class>
-		<class name="Vec4">
-			<constructor>
-				<args>
-					<arg>F32</arg>
-					<arg>F32</arg>
-					<arg>F32</arg>
-					<arg>F32</arg>
-				</args>
-			</constructor>
+		<class name="Vec4" serialize="true">
+			<constructors>
+				<constructor></constructor>
+				<constructor>
+					<args>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+				<constructor>
+					<args>
+						<arg>F32</arg>
+						<arg>F32</arg>
+						<arg>F32</arg>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+			</constructors>
 			<methods>
 				<method name="getX">
 					<overrideCall>F32 ret = (*self).x();</overrideCall>
@@ -348,7 +367,14 @@ namespace anki {]]></head>
 			</methods>
 		</class>
 		<class name="Mat3">
-			<constructor></constructor>
+			<constructors>
+				<constructor></constructor>
+				<constructor>
+					<args>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+			</constructors>
 			<methods>
 				<method name="operator=">
 					<args>
@@ -388,7 +414,14 @@ namespace anki {]]></head>
 			</methods>
 		</class>
 		<class name="Mat3x4">
-			<constructor></constructor>
+			<constructors>
+				<constructor></constructor>
+				<constructor>
+					<args>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+			</constructors>
 			<methods>
 				<method name="operator=">
 					<args>
@@ -431,7 +464,16 @@ namespace anki {]]></head>
 			</methods>
 		</class>
 		<class name="Transform">
-			<constructor></constructor>
+			<constructors>
+				<constructor></constructor>
+				<constructor>
+					<args>
+						<arg>Vec4</arg>
+						<arg>Mat3x4</arg>
+						<arg>F32</arg>
+					</args>
+				</constructor>
+			</constructors>
 			<methods>
 				<method name="operator=">
 					<args>

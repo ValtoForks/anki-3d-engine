@@ -56,16 +56,20 @@ Error GrManager::newInstance(GrManagerInitInfo& init, GrManager*& gr)
 
 void GrManager::deleteInstance(GrManager* gr)
 {
-	ANKI_ASSERT(gr);
+	if(gr == nullptr)
+	{
+		return;
+	}
+
 	auto alloc = gr->m_alloc;
 	gr->~GrManager();
 	alloc.deallocate(gr, 1);
 }
 
-void GrManager::beginFrame()
+TexturePtr GrManager::acquireNextPresentableTexture()
 {
 	ANKI_VK_SELF(GrManagerImpl);
-	self.beginFrame();
+	return self.acquireNextPresentableTexture();
 }
 
 void GrManager::swapBuffers()
@@ -86,6 +90,7 @@ GrManagerStats GrManager::getStats() const
 	GrManagerStats out;
 
 	self.getGpuMemoryManager().getAllocatedMemory(out.m_gpuMemory, out.m_cpuMemory);
+	out.m_commandBufferCount = self.getCommandBufferFactory().getCreatedCommandBufferCount();
 
 	return out;
 }

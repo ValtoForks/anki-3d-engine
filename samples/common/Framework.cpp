@@ -20,7 +20,7 @@ Error SampleApp::init(int argc, char** argv, CString sampleName)
 
 	// Init the super class
 	Config config;
-	config.set("window.fullscreenDesktopResolution", true);
+	config.set("window.fullscreen", true);
 	config.set("rsrc.dataPaths", ".:../..");
 	config.set("window.debugContext", 0);
 	ANKI_CHECK(config.setFromCommandLineArguments(argc, argv));
@@ -32,7 +32,7 @@ Error SampleApp::init(int argc, char** argv, CString sampleName)
 	getInput().moveCursor(Vec2(0.0f));
 
 	// Some renderer stuff
-	getMainRenderer().getOffscreenRenderer().getVolumetric().setFogParticleColor(Vec3(1.0f, 0.9f, 0.9f) * 0.0001f);
+	getMainRenderer().getOffscreenRenderer().getVolumetricFog().setFogParticleColor(Vec3(1.0f, 0.9f, 0.9f));
 
 	ANKI_CHECK(sampleExtraInit());
 
@@ -89,10 +89,6 @@ Error SampleApp::userMainLoop(Bool& quit)
 	{
 		// renderer.getDbg().flipFlags(DbgFlag::SPATIAL_COMPONENT);
 	}
-	if(in.getKey(KeyCode::F6) == 1)
-	{
-		renderer.getDbg().switchDepthTestEnabled();
-	}
 
 	if(in.getKey(KeyCode::UP))
 	{
@@ -124,14 +120,14 @@ Error SampleApp::userMainLoop(Bool& quit)
 		mover->moveLocalX(MOVE_DISTANCE);
 	}
 
-	if(in.getKey(KeyCode::Z))
+	if(in.getKey(KeyCode::C))
 	{
-		mover->moveLocalY(MOVE_DISTANCE);
+		mover->moveLocalY(-MOVE_DISTANCE);
 	}
 
 	if(in.getKey(KeyCode::SPACE))
 	{
-		mover->moveLocalY(-MOVE_DISTANCE);
+		mover->moveLocalY(MOVE_DISTANCE);
 	}
 
 	if(in.getKey(KeyCode::W))
@@ -152,6 +148,11 @@ Error SampleApp::userMainLoop(Bool& quit)
 	if(in.getKey(KeyCode::E))
 	{
 		mover->rotateLocalZ(-ROTATE_ANGLE);
+	}
+
+	if(in.getKey(KeyCode::F12) == 1)
+	{
+		CoreTracerSingleton::get().m_enabled = !CoreTracerSingleton::get().m_enabled;
 	}
 
 	if(in.getMousePosition() != Vec2(0.0))

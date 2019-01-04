@@ -340,7 +340,7 @@ void Exporter::exportSkeleton(const aiMesh& mesh) const
 		// <name>
 		file << "\t\t\t<name>" << bone.mName.C_Str() << "</name>\n";
 
-		// <bontTransform>
+		// <boneTransform>
 		aiMatrix4x4 akMat = toAnkiMatrix(bone.mOffsetMatrix);
 		file << "\t\t\t<boneTransform>";
 		for(unsigned j = 0; j < 4; j++)
@@ -792,22 +792,6 @@ void Exporter::visitNode(const aiNode* ainode)
 				m_staticCollisionNodes.push_back(n);
 				special = true;
 			}
-			else if(prop.first == "portal" && prop.second == "true")
-			{
-				Portal portal;
-				portal.m_meshIndex = meshIndex;
-				portal.m_transform = toAnkiMatrix(ainode->mTransformation);
-				m_portals.push_back(portal);
-				special = true;
-			}
-			else if(prop.first == "sector" && prop.second == "true")
-			{
-				Sector sector;
-				sector.m_meshIndex = meshIndex;
-				sector.m_transform = toAnkiMatrix(ainode->mTransformation);
-				m_sectors.push_back(sector);
-				special = true;
-			}
 			else if(prop.first == "lod1")
 			{
 				lod1MeshName = prop.second;
@@ -819,9 +803,12 @@ void Exporter::visitNode(const aiNode* ainode)
 				aiMatrix4x4 trf = toAnkiMatrix(ainode->mTransformation);
 				probe.m_position = aiVector3D(trf.a4, trf.b4, trf.c4);
 
-				aiVector3D zAxis(trf.a3, trf.b3, trf.c3);
-				float scale = zAxis.Length();
-				probe.m_radius = scale;
+				aiVector3D scale(trf.a1, trf.b2, trf.c3);
+				assert(scale.x > 0.0f && scale.y > 0.0f && scale.z > 0.0f);
+
+				aiVector3D half = scale;
+				probe.m_aabbMin = probe.m_position - half - probe.m_position;
+				probe.m_aabbMax = probe.m_position + half - probe.m_position;
 
 				m_reflectionProbes.push_back(probe);
 
@@ -996,43 +983,9 @@ void Exporter::exportAll()
 	}
 
 	//
-	// Export portals
-	//
-	unsigned i = 0;
-	for(const Portal& portal : m_portals)
-	{
-		uint32_t meshIndex = portal.m_meshIndex;
-		exportMesh(*m_scene->mMeshes[meshIndex], nullptr, 3);
-
-		std::string name = getMeshName(getMeshAt(meshIndex));
-		std::string fname = m_rpath + name + ".ankimesh";
-		file << "\nnode = scene:newPortalNode(\"" << name << i << "\", \"" << fname << "\")\n";
-
-		writeNodeTransform("node", portal.m_transform);
-		++i;
-	}
-
-	//
-	// Export sectors
-	//
-	i = 0;
-	for(const Sector& sector : m_sectors)
-	{
-		uint32_t meshIndex = sector.m_meshIndex;
-		exportMesh(*m_scene->mMeshes[meshIndex], nullptr, 3);
-
-		std::string name = getMeshName(getMeshAt(meshIndex));
-		std::string fname = m_rpath + name + ".ankimesh";
-		file << "\nnode = scene:newSectorNode(\"" << name << i << "\", \"" << fname << "\")\n";
-
-		writeNodeTransform("node", sector.m_transform);
-		++i;
-	}
-
-	//
 	// Export particle emitters
 	//
-	i = 0;
+	int i = 0;
 	for(const ParticleEmitter& p : m_particleEmitters)
 	{
 		std::string name = "particles" + std::to_string(i);
@@ -1049,7 +1002,9 @@ void Exporter::exportAll()
 	for(const ReflectionProbe& probe : m_reflectionProbes)
 	{
 		std::string name = "reflprobe" + std::to_string(i);
-		file << "\nnode = scene:newReflectionProbeNode(\"" << name << "\", " << probe.m_radius << ")\n";
+		file << "\nnode = scene:newReflectionProbeNode(\"" << name << "\", Vec4.new(" << probe.m_aabbMin.x << ", "
+			 << probe.m_aabbMin.y << ", " << probe.m_aabbMin.z << ", 0), Vec4.new(" << probe.m_aabbMax.x << ", "
+			 << probe.m_aabbMax.y << ", " << probe.m_aabbMax.z << ", 0))\n";
 
 		aiMatrix4x4 trf;
 		aiMatrix4x4::Translation(probe.m_position, trf);
@@ -1141,22 +1096,28 @@ void Exporter::exportAll()
 		// Write the collision node
 		if(!node.m_collisionMesh.empty())
 		{
-			bool found = false;
 			unsigned i = 0;
-			for(; i < m_scene->mNumMeshes; i++)
+			if(node.m_collisionMesh == "self")
 			{
-				if(m_scene->mMeshes[i]->mName.C_Str() == node.m_collisionMesh)
+				i = model.m_meshIndex;
+			}
+			else
+			{
+				for(; i < m_scene->mNumMeshes; i++)
 				{
-					found = true;
-					break;
+					if(m_scene->mMeshes[i]->mName.C_Str() == node.m_collisionMesh)
+					{
+						break;
+					}
 				}
 			}
 
+			const bool found = i < m_scene->mNumMeshes;
 			if(found)
 			{
 				exportCollisionMesh(i);
 
-				std::string fname = m_rpath + node.m_collisionMesh + ".ankicl";
+				std::string fname = m_rpath + getMeshName(getMeshAt(i)) + ".ankicl";
 				file << "node = scene:newStaticCollisionNode(\"" << nodeName << "_cl\", \"" << fname << "\", trf)\n";
 			}
 			else

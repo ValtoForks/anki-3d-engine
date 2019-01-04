@@ -53,33 +53,77 @@ inline void RenderPassDescriptionBase::fixSubresource(RenderPassDependency& dep)
 	}
 }
 
-inline void RenderPassDescriptionBase::newConsumer(const RenderPassDependency& dep)
+inline void RenderPassDescriptionBase::validateDep(const RenderPassDependency& dep)
 {
-	m_consumers.emplaceBack(m_alloc, dep);
-
-	if(dep.m_isTexture && dep.m_texture.m_usage != TextureUsageBit::NONE)
-	{
-		fixSubresource(m_consumers.getBack());
-		m_consumerRtMask.set(dep.m_texture.m_handle.m_idx);
-	}
-	else if(dep.m_buffer.m_usage != BufferUsageBit::NONE)
-	{
-		m_consumerBufferMask.set(dep.m_buffer.m_handle.m_idx);
-		m_hasBufferDeps = true;
-	}
-}
-
-inline void RenderPassDescriptionBase::newProducer(const RenderPassDependency& dep)
-{
-	m_producers.emplaceBack(m_alloc, dep);
+	// Validate dep
 	if(dep.m_isTexture)
 	{
-		fixSubresource(m_producers.getBack());
-		m_producerRtMask.set(dep.m_texture.m_handle.m_idx);
+		TextureUsageBit usage = dep.m_texture.m_usage;
+		(void)usage;
+		if(m_type == Type::GRAPHICS)
+		{
+			ANKI_ASSERT(!(usage & TextureUsageBit::ALL_COMPUTE));
+		}
+		else
+		{
+			ANKI_ASSERT(!(usage & TextureUsageBit::ALL_GRAPHICS));
+		}
+
+		ANKI_ASSERT(!!(usage & TextureUsageBit::ALL_READ) || !!(usage & TextureUsageBit::ALL_WRITE));
 	}
 	else
 	{
-		m_producerBufferMask.set(dep.m_buffer.m_handle.m_idx);
+		BufferUsageBit usage = dep.m_buffer.m_usage;
+		(void)usage;
+		if(m_type == Type::GRAPHICS)
+		{
+			ANKI_ASSERT(!(usage & BufferUsageBit::ALL_COMPUTE));
+		}
+		else
+		{
+			ANKI_ASSERT(!(usage & BufferUsageBit::ALL_GRAPHICS));
+		}
+
+		ANKI_ASSERT(!!(usage & BufferUsageBit::ALL_READ) || !!(usage & BufferUsageBit::ALL_WRITE));
+	}
+}
+
+inline void RenderPassDescriptionBase::newDependency(const RenderPassDependency& dep)
+{
+	validateDep(dep);
+
+	DynamicArray<RenderPassDependency>& deps = (dep.m_isTexture) ? m_rtDeps : m_buffDeps;
+	deps.emplaceBack(m_alloc, dep);
+
+	if(dep.m_isTexture)
+	{
+		fixSubresource(deps.getBack());
+
+		if(!!(dep.m_texture.m_usage & TextureUsageBit::ALL_READ))
+		{
+			m_readRtMask.set(dep.m_texture.m_handle.m_idx);
+		}
+
+		if(!!(dep.m_texture.m_usage & TextureUsageBit::ALL_WRITE))
+		{
+			m_writeRtMask.set(dep.m_texture.m_handle.m_idx);
+		}
+
+		// Try to derive the usage by that dep
+		m_descr->m_renderTargets[dep.m_texture.m_handle.m_idx].m_usageDerivedByDeps |= dep.m_texture.m_usage;
+	}
+	else
+	{
+		if(!!(dep.m_buffer.m_usage & BufferUsageBit::ALL_READ))
+		{
+			m_readBuffMask.set(dep.m_buffer.m_handle.m_idx);
+		}
+
+		if(!!(dep.m_buffer.m_usage & BufferUsageBit::ALL_WRITE))
+		{
+			m_writeBuffMask.set(dep.m_buffer.m_handle.m_idx);
+		}
+
 		m_hasBufferDeps = true;
 	}
 }

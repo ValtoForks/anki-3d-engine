@@ -32,29 +32,50 @@ Error DownscaleBlur::initInternal(const ConfigSet&)
 	ANKI_R_LOGI("Initializing dowscale blur (passCount: %u)", U(m_passCount));
 
 	// Create the miped texture
-	TextureInitInfo texinit = m_r->create2DRenderTargetDescription(m_r->getWidth() / 2,
-		m_r->getHeight() / 2,
-		LIGHT_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT,
-		TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE
-			| TextureUsageBit::SAMPLED_COMPUTE,
-		"DownscaleBlur");
+	TextureInitInfo texinit = m_r->create2DRenderTargetDescription(
+		m_r->getWidth() / 2, m_r->getHeight() / 2, LIGHT_SHADING_COLOR_ATTACHMENT_PIXEL_FORMAT, "DownscaleBlur");
+	texinit.m_usage = TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::SAMPLED_COMPUTE;
+	if(m_useCompute)
+	{
+		texinit.m_usage |= TextureUsageBit::SAMPLED_COMPUTE | TextureUsageBit::IMAGE_COMPUTE_WRITE;
+	}
+	else
+	{
+		texinit.m_usage |= TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE;
+	}
 	texinit.m_mipmapCount = m_passCount;
+	texinit.m_initialUsage = TextureUsageBit::SAMPLED_COMPUTE;
 	m_rtTex = m_r->createAndClearRenderTarget(texinit);
 
 	// FB descr
-	m_fbDescrs.create(getAllocator(), m_passCount);
-	for(U pass = 0; pass < m_passCount; ++pass)
+	if(!m_useCompute)
 	{
-		m_fbDescrs[pass].m_colorAttachmentCount = 1;
-		m_fbDescrs[pass].m_colorAttachments[0].m_loadOperation = AttachmentLoadOperation::DONT_CARE;
-		m_fbDescrs[pass].m_colorAttachments[0].m_surface.m_level = pass;
-		m_fbDescrs[pass].bake();
+		m_fbDescrs.create(getAllocator(), m_passCount);
+		for(U pass = 0; pass < m_passCount; ++pass)
+		{
+			m_fbDescrs[pass].m_colorAttachmentCount = 1;
+			m_fbDescrs[pass].m_colorAttachments[0].m_loadOperation = AttachmentLoadOperation::DONT_CARE;
+			m_fbDescrs[pass].m_colorAttachments[0].m_surface.m_level = pass;
+			m_fbDescrs[pass].bake();
+		}
 	}
 
 	// Shader programs
-	ANKI_CHECK(getResourceManager().loadResource("programs/DownscaleBlur.ankiprog", m_prog));
-	const ShaderProgramResourceVariant* variant;
-	m_prog->getOrCreateVariant(variant);
+	const ShaderProgramResourceVariant* variant = nullptr;
+	if(m_useCompute)
+	{
+		ANKI_CHECK(getResourceManager().loadResource("shaders/DownscaleBlurCompute.glslp", m_prog));
+
+		ShaderProgramResourceConstantValueInitList<1> consts(m_prog);
+		consts.add("WORKGROUP_SIZE", UVec2(m_workgroupSize[0], m_workgroupSize[1]));
+
+		m_prog->getOrCreateVariant(consts.get(), variant);
+	}
+	else
+	{
+		ANKI_CHECK(getResourceManager().loadResource("shaders/DownscaleBlur.glslp", m_prog));
+		m_prog->getOrCreateVariant(variant);
+	}
 	m_grProg = variant->getProgram();
 
 	return Error::NONE;
@@ -63,7 +84,7 @@ Error DownscaleBlur::initInternal(const ConfigSet&)
 void DownscaleBlur::importRenderTargets(RenderingContext& ctx)
 {
 	RenderGraphDescription& rgraph = ctx.m_renderGraphDescr;
-	m_runCtx.m_rt = rgraph.importRenderTarget("Down/Blur", m_rtTex, TextureUsageBit::SAMPLED_COMPUTE);
+	m_runCtx.m_rt = rgraph.importRenderTarget(m_rtTex, TextureUsageBit::SAMPLED_COMPUTE);
 }
 
 void DownscaleBlur::populateRenderGraph(RenderingContext& ctx)
@@ -80,35 +101,60 @@ void DownscaleBlur::populateRenderGraph(RenderingContext& ctx)
 		"Down/Blur #5",
 		"Down/Blur #6",
 		"Down/Blur #7"}};
-	for(U i = 0; i < m_passCount; ++i)
+	if(m_useCompute)
 	{
-		GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass(passNames[i]);
-		pass.setWork(runCallback, this, 0);
-
-		if(i > 0)
+		for(U i = 0; i < m_passCount; ++i)
 		{
-			TextureSubresourceInfo sampleSubresource;
-			TextureSubresourceInfo renderSubresource;
+			ComputeRenderPassDescription& pass = rgraph.newComputeRenderPass(passNames[i]);
+			pass.setWork(runCallback, this, 0);
 
-			sampleSubresource.m_firstMipmap = i - 1;
-			renderSubresource.m_firstMipmap = i;
+			if(i > 0)
+			{
+				TextureSubresourceInfo sampleSubresource;
+				TextureSubresourceInfo renderSubresource;
 
-			pass.newConsumer({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE, renderSubresource});
-			pass.newConsumer({m_runCtx.m_rt, TextureUsageBit::SAMPLED_FRAGMENT, sampleSubresource});
+				sampleSubresource.m_firstMipmap = i - 1;
+				renderSubresource.m_firstMipmap = i;
 
-			pass.newProducer({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE, renderSubresource});
+				pass.newDependency({m_runCtx.m_rt, TextureUsageBit::IMAGE_COMPUTE_WRITE, renderSubresource});
+				pass.newDependency({m_runCtx.m_rt, TextureUsageBit::SAMPLED_COMPUTE, sampleSubresource});
+			}
+			else
+			{
+				TextureSubresourceInfo renderSubresource;
+
+				pass.newDependency({m_runCtx.m_rt, TextureUsageBit::IMAGE_COMPUTE_WRITE, renderSubresource});
+				pass.newDependency({m_r->getTemporalAA().getRt(), TextureUsageBit::SAMPLED_COMPUTE});
+			}
 		}
-		else
+	}
+	else
+	{
+		for(U i = 0; i < m_passCount; ++i)
 		{
-			TextureSubresourceInfo renderSubresource;
+			GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass(passNames[i]);
+			pass.setWork(runCallback, this, 0);
+			pass.setFramebufferInfo(m_fbDescrs[i], {{m_runCtx.m_rt}}, {});
 
-			pass.newConsumer({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE, renderSubresource});
-			pass.newConsumer({m_r->getTemporalAA().getRt(), TextureUsageBit::SAMPLED_FRAGMENT});
+			if(i > 0)
+			{
+				TextureSubresourceInfo sampleSubresource;
+				TextureSubresourceInfo renderSubresource;
 
-			pass.newProducer({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE, renderSubresource});
+				sampleSubresource.m_firstMipmap = i - 1;
+				renderSubresource.m_firstMipmap = i;
+
+				pass.newDependency({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE, renderSubresource});
+				pass.newDependency({m_runCtx.m_rt, TextureUsageBit::SAMPLED_FRAGMENT, sampleSubresource});
+			}
+			else
+			{
+				TextureSubresourceInfo renderSubresource;
+
+				pass.newDependency({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE, renderSubresource});
+				pass.newDependency({m_r->getTemporalAA().getRt(), TextureUsageBit::SAMPLED_FRAGMENT});
+			}
 		}
-
-		pass.setFramebufferInfo(m_fbDescrs[i], {{m_runCtx.m_rt}}, {});
 	}
 }
 
@@ -116,15 +162,16 @@ void DownscaleBlur::run(RenderPassWorkContext& rgraphCtx)
 {
 	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
 
+	cmdb->bindShaderProgram(m_grProg);
+
 	const U passIdx = m_runCtx.m_crntPassIdx++;
+	const U vpWidth = m_rtTex->getWidth() >> passIdx;
+	const U vpHeight = m_rtTex->getHeight() >> passIdx;
 
 	if(passIdx > 0)
 	{
-		// Bind the Rt
-
 		TextureSubresourceInfo sampleSubresource;
 		sampleSubresource.m_firstMipmap = passIdx - 1;
-
 		rgraphCtx.bindTextureAndSampler(0, 0, m_runCtx.m_rt, sampleSubresource, m_r->getLinearSampler());
 	}
 	else
@@ -132,9 +179,25 @@ void DownscaleBlur::run(RenderPassWorkContext& rgraphCtx)
 		rgraphCtx.bindColorTextureAndSampler(0, 0, m_r->getTemporalAA().getRt(), m_r->getLinearSampler());
 	}
 
-	cmdb->setViewport(0, 0, m_rtTex->getWidth() >> passIdx, m_rtTex->getHeight() >> passIdx);
-	cmdb->bindShaderProgram(m_grProg);
-	drawQuad(cmdb);
+	if(m_useCompute)
+	{
+		TextureSubresourceInfo sampleSubresource;
+		sampleSubresource.m_firstMipmap = passIdx;
+		rgraphCtx.bindImage(0, 0, m_runCtx.m_rt, sampleSubresource);
+
+		UVec4 fbSize(vpWidth, vpHeight, 0, 0);
+		cmdb->setPushConstants(&fbSize, sizeof(fbSize));
+	}
+
+	if(m_useCompute)
+	{
+		dispatchPPCompute(cmdb, m_workgroupSize[0], m_workgroupSize[1], vpWidth, vpHeight);
+	}
+	else
+	{
+		cmdb->setViewport(0, 0, vpWidth, vpHeight);
+		drawQuad(cmdb);
+	}
 }
 
 } // end namespace anki

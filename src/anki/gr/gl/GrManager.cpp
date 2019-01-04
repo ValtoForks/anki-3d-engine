@@ -56,16 +56,20 @@ Error GrManager::newInstance(GrManagerInitInfo& init, GrManager*& gr)
 
 void GrManager::deleteInstance(GrManager* gr)
 {
-	ANKI_ASSERT(gr);
+	if(gr == nullptr)
+	{
+		return;
+	}
 
 	auto alloc = gr->m_alloc;
 	gr->~GrManager();
 	alloc.deallocate(gr, 1);
 }
 
-void GrManager::beginFrame()
+TexturePtr GrManager::acquireNextPresentableTexture()
 {
-	// Nothing for GL
+	ANKI_GL_SELF(GrManagerImpl);
+	return self.m_fakeFbTex;
 }
 
 void GrManager::swapBuffers()
@@ -140,5 +144,10 @@ RenderGraphPtr GrManager::newRenderGraph()
 }
 
 #undef ANKI_SAFE_CONSTRUCT
+
+GrManagerStats GrManager::getStats() const
+{
+	return GrManagerStats();
+}
 
 } // end namespace anki

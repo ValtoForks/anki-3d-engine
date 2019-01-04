@@ -18,7 +18,7 @@ def parse_commandline():
 
 	parser = optparse.OptionParser(usage = "usage: %prog [options]", description = "Create LUA bindings using XML")
 
-	parser.add_option("-i", "--input", dest = "inp", type = "string", 
+	parser.add_option("-i", "--input", dest = "inp", type = "string",
 		help = "specify the XML files to parse. Seperate with :")
 
 	(options, args) = parser.parse_args()
@@ -134,17 +134,19 @@ def ret(ret_el):
 			wglue("ud = static_cast<LuaUserData*>(voidp);")
 			wglue("luaL_setmetatable(l, \"%s\");" % type)
 
+			wglue("extern LuaUserDataTypeInfo luaUserDataTypeInfo%s;" % type)
 			if is_ptr:
-				wglue("ud->initPointed(%d, const_cast<%s*>(ret));" % (type_sig(type), type))
+				wglue("ud->initPointed(&luaUserDataTypeInfo%s, const_cast<%s*>(ret));" % (type, type))
 			elif is_ref:
-				wglue("ud->initPointed(%d, const_cast<%s*>(&ret));" % (type_sig(type), type))
+				wglue("ud->initPointed(&luaUserDataTypeInfo%s, const_cast<%s*>(&ret));" % (type, type))
 		else:
 			wglue("size = LuaUserData::computeSizeForGarbageCollected<%s>();" % type)
 			wglue("voidp = lua_newuserdata(l, size);")
 			wglue("luaL_setmetatable(l, \"%s\");" % type)
 
 			wglue("ud = static_cast<LuaUserData*>(voidp);")
-			wglue("ud->initGarbageCollected(%d);" % type_sig(type))
+			wglue("extern LuaUserDataTypeInfo luaUserDataTypeInfo%s;" % type)
+			wglue("ud->initGarbageCollected(&luaUserDataTypeInfo%s);" % type)
 
 			wglue("::new(ud->getData<%s>()) %s(std::move(ret));" % (type, type))
 
@@ -158,7 +160,7 @@ def arg(arg_txt, stack_index, index):
 
 	if type_is_bool(type) or type_is_number(type):
 		wglue("%s arg%d;" % (type, index))
-		wglue("if(LuaBinder::checkNumber(l, %d, arg%d))" % (stack_index, index))
+		wglue("if(ANKI_UNLIKELY(LuaBinder::checkNumber(l, %d, arg%d)))" % (stack_index, index))
 		wglue("{")
 		ident(1)
 		wglue("return -1;")
@@ -166,14 +168,15 @@ def arg(arg_txt, stack_index, index):
 		wglue("}")
 	elif type == "char" or type == "CString":
 		wglue("const char* arg%d;" % index)
-		wglue("if(LuaBinder::checkString(l, %d, arg%d))" % (stack_index, index))
+		wglue("if(ANKI_UNLIKELY(LuaBinder::checkString(l, %d, arg%d)))" % (stack_index, index))
 		wglue("{")
 		ident(1)
 		wglue("return -1;")
 		ident(-1)
 		wglue("}")
 	else:
-		wglue("if(LuaBinder::checkUserData(l, %d, \"%s\", %d, ud))" % (stack_index, type, type_sig(type)))
+		wglue("extern LuaUserDataTypeInfo luaUserDataTypeInfo%s;" % type)
+		wglue("if(ANKI_UNLIKELY(LuaBinder::checkUserData(l, %d, luaUserDataTypeInfo%s, ud)))" % (stack_index, type))
 		wglue("{")
 		ident(1)
 		wglue("return -1;")
@@ -213,18 +216,32 @@ def args(args_el, stack_index):
 
 	return args_str
 
+def count_args(args_el):
+	""" Count the number of arguments """
+
+	if args_el is None:
+		return 0
+
+	count = 0
+	for arg_el in args_el.iter("arg"):
+		count += 1
+
+	return count
+
 def check_args(args_el, bias):
 	""" Check number of args. Call that first because it throws error """
 
-	if args_el is None:
-		wglue("LuaBinder::checkArgsCount(l, %d);" % bias)
+	if args_el is not None:
+		count = bias + count_args(args_el)
 	else:
-		count = 0
-		for arg_el in args_el.iter("arg"):
-			count += 1
+		count = bias
 
-		wglue("LuaBinder::checkArgsCount(l, %d);" % (bias + count))
-
+	wglue("if(ANKI_UNLIKELY(LuaBinder::checkArgsCount(l, %d)))" % count)
+	wglue("{")
+	ident(1)
+	wglue("return -1;")
+	ident(-1)
+	wglue("}")
 	wglue("")
 
 def get_meth_alias(meth_el):
@@ -286,7 +303,7 @@ def method(class_name, meth_el):
 
 	# Get this pointer
 	wglue("// Get \"this\" as \"self\"")
-	wglue("if(LuaBinder::checkUserData(l, 1, classname%s, %d, ud))" % (class_name, type_sig(class_name)))
+	wglue("if(LuaBinder::checkUserData(l, 1, luaUserDataTypeInfo%s, ud))" % class_name)
 	wglue("{")
 	ident(1)
 	wglue("return -1;")
@@ -400,11 +417,11 @@ def static_method(class_name, meth_el):
 	wglue("}")
 	wglue("")
 
-def constructor(constr_el, class_name):
+def constructor(constr_el, class_name, constructor_idx):
 	""" Handle constructor """
 
 	wglue("/// Pre-wrap constructor for %s." % (class_name))
-	wglue("static inline int pwrap%sCtor(lua_State* l)" % class_name)
+	wglue("static inline int pwrap%sCtor%d(lua_State* l)" % (class_name, constructor_idx))
 	wglue("{")
 	ident(1)
 	write_local_vars()
@@ -419,9 +436,10 @@ def constructor(constr_el, class_name):
 
 	wglue("size = LuaUserData::computeSizeForGarbageCollected<%s>();" % class_name)
 	wglue("voidp = lua_newuserdata(l, size);")
-	wglue("luaL_setmetatable(l, classname%s);" % class_name)
+	wglue("luaL_setmetatable(l, luaUserDataTypeInfo%s.m_typeName);" % class_name)
 	wglue("ud = static_cast<LuaUserData*>(voidp);")
-	wglue("ud->initGarbageCollected(%d);" % type_sig(class_name))
+	wglue("extern LuaUserDataTypeInfo luaUserDataTypeInfo%s;" % class_name)
+	wglue("ud->initGarbageCollected(&luaUserDataTypeInfo%s);" % class_name)
 	wglue("::new(ud->getData<%s>()) %s(%s);" % (class_name, class_name, args_str))
 	wglue("")
 
@@ -431,12 +449,53 @@ def constructor(constr_el, class_name):
 	wglue("}")
 	wglue("")
 
-	# Write the actual function
-	wglue("/// Wrap constructor for %s." % class_name)
+def constructors(constructors_el, class_name):
+	""" Wrap all constructors """
+
+	idx = 0
+	func_names_and_arg_counts = []
+
+	# Create the pre-wrap C functions
+	for constructor_el in constructors_el.iter("constructor"):
+		arg_count = count_args(constructor_el.find("args"))
+
+		# Iterate all arg counts and make sure there are no duplicates
+		for i in range(idx):
+			if func_names_and_arg_counts[i][1] == arg_count:
+				raise Exception("Every constructor overload should have a unique arg count. class: %s" % class_name)
+
+		constructor(constructor_el, class_name, idx)
+		func_names_and_arg_counts.append(["pwrap%sCtor%d" % (class_name, idx), arg_count])
+		idx += 1
+
+	if idx == 0:
+		raise Exception("Found no <constructor>")
+
+	# Create the landing function
+	wglue("/// Wrap constructors for %s." % class_name)
 	wglue("static int wrap%sCtor(lua_State* l)" % class_name)
 	wglue("{")
 	ident(1)
-	wglue("int res = pwrap%sCtor(l);" % class_name)
+	if idx == 1:
+		wglue("int res = pwrap%sCtor0(l);" % class_name)
+	else:
+		wglue("// Chose the right overload")
+		wglue("const int argCount = lua_gettop(l);")
+		wglue("int res = 0;")
+		wglue("switch(argCount)")
+		wglue("{")
+		for name_and_arg_count in func_names_and_arg_counts:
+			func_name = name_and_arg_count[0]
+			arg_count = name_and_arg_count[1]
+			wglue("case %d:" % arg_count)
+			wglue("res = %s(l); break;" % func_name)
+
+		wglue("default:")
+		wglue("lua_pushfstring(l, \"Wrong overloaded new. Wrong number of arguments: %d\", argCount);")
+		wglue("res = -1;")
+		wglue("}")
+	wglue("")
+
 	wglue("if(res >= 0)")
 	wglue("{")
 	ident(1)
@@ -457,10 +516,11 @@ def destructor(class_name):
 	wglue("static int wrap%sDtor(lua_State* l)" % class_name)
 	wglue("{")
 	ident(1)
-	write_local_vars();
+	write_local_vars()
 
-	wglue("LuaBinder::checkArgsCount(l, 1);")
-	wglue("if(LuaBinder::checkUserData(l, 1, classname%s, %d, ud))" % (class_name, type_sig(class_name)))
+	check_args(None, 1)
+
+	wglue("if(ANKI_UNLIKELY(LuaBinder::checkUserData(l, 1, luaUserDataTypeInfo%s, ud)))" % class_name)
 	wglue("{")
 	ident(1)
 	wglue("return -1;")
@@ -488,32 +548,63 @@ def class_(class_el):
 
 	class_name = class_el.get("name")
 
-	# Write class decoration and stuff
-	wglue("static const char* classname%s = \"%s\";" % (class_name, class_name))
-	wglue("")
-	wglue("template<>")
-	wglue("I64 LuaBinder::getWrappedTypeSignature<%s>()" % class_name)
-	wglue("{")
+	# Write serializer
+	serialize = class_el.get("serialize") is not None and class_el.get("serialize") == "true"
+	if serialize:
+		# Serialize
+		serialize_cb_name = "serialize%s" % class_name
+		wglue("/// Serialize %s" % class_name)
+		wglue("static void %s(LuaUserData& self, void* data, PtrSize& size)" % serialize_cb_name)
+		wglue("{")
+		ident(1)
+		wglue("%s* obj = self.getData<%s>();" % (class_name, class_name))
+		wglue("obj->serialize(data, size);")
+		ident(-1)
+		wglue("}")
+		wglue("")
+
+		# Deserialize
+		deserialize_cb_name = "deserialize%s" % class_name
+		wglue("/// De-serialize %s" % class_name)
+		wglue("static void %s(const void* data, LuaUserData& self)" % deserialize_cb_name)
+		wglue("{")
+		ident(1)
+		wglue("ANKI_ASSERT(data);")
+		wglue("%s* obj = self.getData<%s>();" % (class_name, class_name))
+		wglue("::new(obj) %s();" % class_name)
+		wglue("obj->deserialize(data);")
+		ident(-1)
+		wglue("}")
+		wglue("")
+	else:
+		serialize_cb_name = "nullptr"
+		deserialize_cb_name = "nullptr"
+
+	# Write the type info
+	wglue("LuaUserDataTypeInfo luaUserDataTypeInfo%s = {" % class_name)
 	ident(1)
-	wglue("return %d;" % type_sig(class_name))
+	wglue("%d, \"%s\", LuaUserData::computeSizeForGarbageCollected<%s>(), %s, %s"
+			% (type_sig(class_name), class_name, class_name, serialize_cb_name, deserialize_cb_name))
 	ident(-1)
-	wglue("}")
+	wglue("};")
 	wglue("")
+
+	# Specialize the getDataTypeInfoFor
 	wglue("template<>")
-	wglue("const char* LuaBinder::getWrappedTypeName<%s>()" % class_name)
+	wglue("const LuaUserDataTypeInfo& LuaUserData::getDataTypeInfoFor<%s>()" % class_name)
 	wglue("{")
 	ident(1)
-	wglue("return classname%s;" % class_name)
+	wglue("return luaUserDataTypeInfo%s;" % class_name)
 	ident(-1)
 	wglue("}")
 	wglue("")
 
 	# Constructor declarations
 	has_constructor = False
-	constructor_el = class_el.find("constructor")
-	if constructor_el is not None:
-		constructor(constructor_el, class_name)
+	constructors_el = class_el.find("constructors")
+	if constructors_el is not None:
 		has_constructor = True
+		constructors(constructors_el, class_name)
 
 	# Destructor declarations
 	if has_constructor:
@@ -541,11 +632,12 @@ def class_(class_el):
 	wglue("static inline void wrap%s(lua_State* l)" % class_name)
 	wglue("{")
 	ident(1)
-	wglue("LuaBinder::createClass(l, classname%s);" % class_name)
+	wglue("LuaBinder::createClass(l, &luaUserDataTypeInfo%s);" % class_name)
 
 	# Register constructor
 	if has_constructor:
-		wglue("LuaBinder::pushLuaCFuncStaticMethod(l, classname%s, \"new\", wrap%sCtor);" % (class_name, class_name))
+		wglue("LuaBinder::pushLuaCFuncStaticMethod(l, luaUserDataTypeInfo%s.m_typeName, \"new\", wrap%sCtor);"
+				% (class_name, class_name))
 
 	# Register destructor
 	if has_constructor:
@@ -557,8 +649,8 @@ def class_(class_el):
 			meth_alias = meth_name_alias[1]
 			is_static = meth_name_alias[2]
 			if is_static:
-				wglue("LuaBinder::pushLuaCFuncStaticMethod(l, classname%s, \"%s\", wrap%s%s);" \
-					% (class_name, meth_alias, class_name, meth_alias))
+				wglue("LuaBinder::pushLuaCFuncStaticMethod(l, luaUserDataTypeInfo%s.m_typeName, \"%s\", wrap%s%s);"
+						% (class_name, meth_alias, class_name, meth_alias))
 			else:
 				wglue("LuaBinder::pushLuaCFuncMethod(l, \"%s\", wrap%s%s);" % (meth_alias, class_name, meth_alias))
 
@@ -687,4 +779,3 @@ def main():
 
 if __name__ == "__main__":
 	main()
-

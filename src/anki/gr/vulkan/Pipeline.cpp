@@ -4,6 +4,7 @@
 // http://www.anki3d.org/LICENSE
 
 #include <anki/gr/vulkan/Pipeline.h>
+#include <anki/gr/vulkan/GrManagerImpl.h>
 #include <anki/gr/common/Misc.h>
 #include <anki/core/Trace.h>
 
@@ -270,6 +271,17 @@ const VkGraphicsPipelineCreateInfo& PipelineStateTracker::updatePipelineCreateIn
 	rastCi.lineWidth = 1.0;
 	ci.pRasterizationState = &rastCi;
 
+	if(m_state.m_rasterizer.m_rasterizationOrder != RasterizationOrder::ORDERED)
+	{
+		VkPipelineRasterizationStateRasterizationOrderAMD& rastOrderCi = m_ci.m_rasterOrder;
+		rastOrderCi = {};
+		rastOrderCi.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_RASTERIZATION_ORDER_AMD;
+		rastOrderCi.rasterizationOrder = convertRasterizationOrder(m_state.m_rasterizer.m_rasterizationOrder);
+
+		ANKI_ASSERT(rastCi.pNext == nullptr);
+		rastCi.pNext = &rastOrderCi;
+	}
+
 	// MS
 	VkPipelineMultisampleStateCreateInfo& msCi = m_ci.m_ms;
 	msCi = {};
@@ -434,13 +446,20 @@ void PipelineFactory::newPipeline(PipelineStateTracker& state, Pipeline& ppline,
 		const VkGraphicsPipelineCreateInfo& ci = state.updatePipelineCreateInfo();
 		pp.m_fb = state.getFb();
 
-		ANKI_TRACE_START_EVENT(VK_PIPELINE_CREATE);
-		ANKI_VK_CHECKF(vkCreateGraphicsPipelines(m_dev, m_pplineCache, 1, &ci, nullptr, &pp.m_handle));
-		ANKI_TRACE_STOP_EVENT(VK_PIPELINE_CREATE);
+		{
+			ANKI_TRACE_SCOPED_EVENT(VK_PIPELINE_CREATE);
+			ANKI_VK_CHECKF(vkCreateGraphicsPipelines(m_dev, m_pplineCache, 1, &ci, nullptr, &pp.m_handle));
+		}
+
 		ANKI_TRACE_INC_COUNTER(VK_PIPELINE_CREATE, 1);
 
 		m_pplines.emplace(m_alloc, hash, pp);
 		ppline.m_handle = pp.m_handle;
+
+		// Print shader info
+		const ShaderProgramImpl& shaderImpl = static_cast<const ShaderProgramImpl&>(*state.m_state.m_prog);
+		shaderImpl.getGrManagerImpl().printPipelineShaderInfo(
+			pp.m_handle, shaderImpl.getName(), shaderImpl.getStages(), hash);
 	}
 }
 

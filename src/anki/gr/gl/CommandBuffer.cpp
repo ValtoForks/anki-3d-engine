@@ -741,7 +741,7 @@ void CommandBuffer::bindImage(U32 set, U32 binding, TextureViewPtr img)
 
 			glBindImageTexture(m_unit,
 				view.m_view.m_glName,
-				m_img->getSubresource().m_firstMipmap,
+				0,
 				GL_TRUE,
 				0,
 				GL_READ_WRITE,
@@ -1352,7 +1352,7 @@ void CommandBuffer::setBufferBarrier(
 		d |= GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT;
 	}
 
-	if(!!(all & BufferUsageBit::INDIRECT))
+	if(!!(all & BufferUsageBit::INDIRECT_ALL))
 	{
 		d |= GL_COMMAND_BARRIER_BIT;
 	}
@@ -1376,19 +1376,76 @@ void CommandBuffer::setBufferBarrier(
 void CommandBuffer::setTextureSurfaceBarrier(
 	TexturePtr tex, TextureUsageBit prevUsage, TextureUsageBit nextUsage, const TextureSurfaceInfo& surf)
 {
-	// Do nothing
+	TextureSubresourceInfo subresource;
+	setTextureBarrier(tex, prevUsage, nextUsage, subresource);
 }
 
 void CommandBuffer::setTextureVolumeBarrier(
 	TexturePtr tex, TextureUsageBit prevUsage, TextureUsageBit nextUsage, const TextureVolumeInfo& vol)
 {
-	// Do nothing
+	TextureSubresourceInfo subresource;
+	setTextureBarrier(tex, prevUsage, nextUsage, subresource);
 }
 
 void CommandBuffer::setTextureBarrier(
 	TexturePtr tex, TextureUsageBit prevUsage, TextureUsageBit nextUsage, const TextureSubresourceInfo& subresource)
 {
-	// Do nothing for GL
+	class Cmd final : public GlCommand
+	{
+	public:
+		GLenum m_barrier;
+
+		Cmd(GLenum barrier)
+			: m_barrier(barrier)
+		{
+		}
+
+		Error operator()(GlState&)
+		{
+			glMemoryBarrier(m_barrier);
+			return Error::NONE;
+		}
+	};
+
+	const TextureUsageBit usage = nextUsage;
+	GLenum e = 0;
+
+	if(!!(usage & TextureUsageBit::SAMPLED_ALL))
+	{
+		e |= GL_TEXTURE_FETCH_BARRIER_BIT;
+	}
+
+	if(!!(usage & TextureUsageBit::IMAGE_ALL))
+	{
+		e |= GL_SHADER_IMAGE_ACCESS_BARRIER_BIT;
+	}
+
+	if(!!(usage & TextureUsageBit::TRANSFER_DESTINATION))
+	{
+		e |= GL_TEXTURE_UPDATE_BARRIER_BIT;
+	}
+
+	if(!!(usage & TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE))
+	{
+
+		e |= GL_FRAMEBUFFER_BARRIER_BIT;
+	}
+
+	if(!!(usage & TextureUsageBit::CLEAR))
+	{
+		// No idea
+	}
+
+	if(!!(usage & TextureUsageBit::GENERATE_MIPMAPS))
+	{
+		// No idea
+	}
+
+	if(e != 0)
+	{
+		ANKI_GL_SELF(CommandBufferImpl);
+		self.pushBackNewCommand<Cmd>(e);
+	}
 }
 
 void CommandBuffer::clearTextureView(TextureViewPtr texView, const ClearValue& clearValue)
@@ -1507,6 +1564,7 @@ void CommandBuffer::setPushConstants(const void* data, U32 dataSize)
 				static_cast<ShaderProgramImpl&>(*state.m_crntProg).getReflection();
 			ANKI_ASSERT(refl.m_uniformDataSize == m_data.getSizeInBytes());
 
+			const Bool transpose = true;
 			for(const ShaderProgramImplReflection::Uniform& uni : refl.m_uniforms)
 			{
 				const U8* data = reinterpret_cast<const U8*>(&m_data[0]) + uni.m_pushConstantOffset;
@@ -1525,7 +1583,7 @@ void CommandBuffer::setPushConstants(const void* data, U32 dataSize)
 					glUniform4uiv(loc, count, reinterpret_cast<const GLuint*>(data));
 					break;
 				case ShaderVariableDataType::MAT4:
-					glUniformMatrix4fv(loc, count, false, reinterpret_cast<const GLfloat*>(data));
+					glUniformMatrix4fv(loc, count, transpose, reinterpret_cast<const GLfloat*>(data));
 					break;
 				case ShaderVariableDataType::MAT3:
 				{
@@ -1533,7 +1591,7 @@ void CommandBuffer::setPushConstants(const void* data, U32 dataSize)
 					ANKI_ASSERT(count == 1 && "TODO");
 					const Mat3x4* m34 = reinterpret_cast<const Mat3x4*>(data);
 					Mat3 m3(m34->getRotationPart());
-					glUniformMatrix3fv(loc, count, false, reinterpret_cast<const GLfloat*>(&m3));
+					glUniformMatrix3fv(loc, count, transpose, reinterpret_cast<const GLfloat*>(&m3));
 					break;
 				}
 				default:
@@ -1551,6 +1609,11 @@ void CommandBuffer::setPushConstants(const void* data, U32 dataSize)
 
 	ANKI_GL_SELF(CommandBufferImpl);
 	self.pushBackNewCommand<PushConstants>(data, dataSize, self.m_alloc);
+}
+
+void CommandBuffer::setRasterizationOrder(RasterizationOrder order)
+{
+	// Nothing for GL
 }
 
 } // end namespace anki

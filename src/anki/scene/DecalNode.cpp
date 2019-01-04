@@ -12,15 +12,15 @@ namespace anki
 {
 
 /// Decal feedback component.
-class DecalMoveFeedbackComponent : public SceneComponent
+class DecalNode::MoveFeedbackComponent : public SceneComponent
 {
 public:
-	DecalMoveFeedbackComponent(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	MoveFeedbackComponent()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	ANKI_USE_RESULT Error update(SceneNode& node, Second, Second, Bool& updated) override
+	ANKI_USE_RESULT Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 
@@ -36,15 +36,15 @@ public:
 };
 
 /// Decal feedback component.
-class DecalShapeFeedbackComponent : public SceneComponent
+class DecalNode::ShapeFeedbackComponent : public SceneComponent
 {
 public:
-	DecalShapeFeedbackComponent(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	ShapeFeedbackComponent()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	ANKI_USE_RESULT Error update(SceneNode& node, Second, Second, Bool& updated) override
+	ANKI_USE_RESULT Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 
@@ -65,10 +65,10 @@ DecalNode::~DecalNode()
 
 Error DecalNode::init()
 {
-	newComponent<MoveComponent>(this);
-	newComponent<DecalMoveFeedbackComponent>(this);
+	newComponent<MoveComponent>();
+	newComponent<MoveFeedbackComponent>();
 	DecalComponent* decalc = newComponent<DecalComponent>(this);
-	newComponent<DecalShapeFeedbackComponent>(this);
+	newComponent<ShapeFeedbackComponent>();
 	newComponent<SpatialComponent>(this, &decalc->getBoundingVolume());
 
 	return Error::NONE;

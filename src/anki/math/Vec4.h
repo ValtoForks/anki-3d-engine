@@ -6,6 +6,7 @@
 #pragma once
 
 #include <anki/math/CommonIncludes.h>
+#include <anki/math/Vec.h>
 
 namespace anki
 {
@@ -213,6 +214,12 @@ void TVec4<F32>::Base::normalize();
 
 template<>
 TVec4<F32> TVec4<F32>::cross(const TVec4<F32>& b) const;
+
+template<>
+TVec4<F32> TVec4<F32>::Base::min(const TVec4<F32>& b) const;
+
+template<>
+TVec4<F32> TVec4<F32>::Base::max(const TVec4<F32>& b) const;
 
 template<>
 TVec4<F32> TVec4<F32>::Base::getAbs() const;

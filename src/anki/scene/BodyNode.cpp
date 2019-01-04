@@ -6,6 +6,7 @@
 #include <anki/scene/BodyNode.h>
 #include <anki/scene/components/BodyComponent.h>
 #include <anki/scene/components/MoveComponent.h>
+#include <anki/scene/components/JointComponent.h>
 #include <anki/scene/SceneGraph.h>
 #include <anki/physics/PhysicsWorld.h>
 #include <anki/resource/ResourceManager.h>
@@ -14,15 +15,15 @@ namespace anki
 {
 
 /// Body feedback component.
-class BodyFeedbackComponent : public SceneComponent
+class BodyNode::FeedbackComponent : public SceneComponent
 {
 public:
-	BodyFeedbackComponent(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	FeedbackComponent()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	ANKI_USE_RESULT Error update(SceneNode& node, Second, Second, Bool& updated) override
+	ANKI_USE_RESULT Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 
@@ -54,18 +55,22 @@ Error BodyNode::init(const CString& resourceFname)
 
 	// Create body
 	PhysicsBodyInitInfo init;
-	init.m_mass = 1.0;
+	init.m_mass = 1.0f;
 	init.m_shape = m_rsrc->getShape();
 	m_body = getSceneGraph().getPhysicsWorld().newInstance<PhysicsBody>(init);
+	m_body->setUserData(this);
+
+	// Joint component
+	newComponent<JointComponent>(this);
 
 	// Body component
-	newComponent<BodyComponent>(this, m_body);
+	newComponent<BodyComponent>(m_body);
 
 	// Feedback component
-	newComponent<BodyFeedbackComponent>(this);
+	newComponent<FeedbackComponent>();
 
 	// Move component
-	newComponent<MoveComponent>(this);
+	newComponent<MoveComponent>(MoveComponentFlag::IGNORE_PARENT_TRANSFORM);
 
 	return Error::NONE;
 }

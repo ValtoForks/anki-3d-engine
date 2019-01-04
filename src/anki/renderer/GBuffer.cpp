@@ -8,7 +8,6 @@
 #include <anki/renderer/RenderQueue.h>
 #include <anki/renderer/LensFlare.h>
 #include <anki/util/Logger.h>
-#include <anki/util/ThreadPool.h>
 #include <anki/misc/ConfigSet.h>
 #include <anki/core/Trace.h>
 
@@ -35,23 +34,16 @@ Error GBuffer::init(const ConfigSet& initializer)
 Error GBuffer::initInternal(const ConfigSet& initializer)
 {
 	// RT descrs
-	m_depthRtDescr = m_r->create2DRenderTargetDescription(m_r->getWidth(),
-		m_r->getHeight(),
-		GBUFFER_DEPTH_ATTACHMENT_PIXEL_FORMAT,
-		TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::SAMPLED_COMPUTE
-			| TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE,
-		"GBuffer depth");
+	m_depthRtDescr = m_r->create2DRenderTargetDescription(
+		m_r->getWidth(), m_r->getHeight(), GBUFFER_DEPTH_ATTACHMENT_PIXEL_FORMAT, "GBuffer depth");
 	m_depthRtDescr.bake();
 
-	static const char* rtNames[GBUFFER_COLOR_ATTACHMENT_COUNT] = {"GBuffer rt0", "GBuffer rt1", "GBuffer rt2"};
+	static const Array<const char*, GBUFFER_COLOR_ATTACHMENT_COUNT> rtNames = {
+		{"GBuffer rt0", "GBuffer rt1", "GBuffer rt2", "GBuffer rt3"}};
 	for(U i = 0; i < GBUFFER_COLOR_ATTACHMENT_COUNT; ++i)
 	{
-		m_colorRtDescrs[i] = m_r->create2DRenderTargetDescription(m_r->getWidth(),
-			m_r->getHeight(),
-			MS_COLOR_ATTACHMENT_PIXEL_FORMATS[i],
-			TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::SAMPLED_COMPUTE
-				| TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE,
-			rtNames[i]);
+		m_colorRtDescrs[i] = m_r->create2DRenderTargetDescription(
+			m_r->getWidth(), m_r->getHeight(), MS_COLOR_ATTACHMENT_PIXEL_FORMATS[i], rtNames[i]);
 		m_colorRtDescrs[i].bake();
 	}
 
@@ -62,12 +54,11 @@ Error GBuffer::initInternal(const ConfigSet& initializer)
 #endif
 
 	m_fbDescr.m_colorAttachmentCount = GBUFFER_COLOR_ATTACHMENT_COUNT;
-	m_fbDescr.m_colorAttachments[0].m_loadOperation = loadop;
-	m_fbDescr.m_colorAttachments[0].m_clearValue.m_colorf = {{1.0, 0.0, 0.0, 0.0}};
-	m_fbDescr.m_colorAttachments[1].m_loadOperation = loadop;
-	m_fbDescr.m_colorAttachments[1].m_clearValue.m_colorf = {{0.0, 1.0, 0.0, 0.0}};
-	m_fbDescr.m_colorAttachments[2].m_loadOperation = loadop;
-	m_fbDescr.m_colorAttachments[2].m_clearValue.m_colorf = {{0.0, 0.0, 1.0, 0.0}};
+	for(U i = 0; i < GBUFFER_COLOR_ATTACHMENT_COUNT; ++i)
+	{
+		m_fbDescr.m_colorAttachments[i].m_loadOperation = loadop;
+		m_fbDescr.m_colorAttachments[i].m_clearValue.m_colorf = {{1.0, 0.0, 1.0, 0.0}};
+	}
 	m_fbDescr.m_depthStencilAttachment.m_loadOperation = AttachmentLoadOperation::CLEAR;
 	m_fbDescr.m_depthStencilAttachment.m_clearValue.m_depthStencil.m_depth = 1.0;
 	m_fbDescr.m_depthStencilAttachment.m_aspect = DepthStencilAspectBit::DEPTH;
@@ -78,7 +69,7 @@ Error GBuffer::initInternal(const ConfigSet& initializer)
 
 void GBuffer::runInThread(const RenderingContext& ctx, RenderPassWorkContext& rgraphCtx) const
 {
-	ANKI_TRACE_SCOPED_EVENT(RENDER_MS);
+	ANKI_TRACE_SCOPED_EVENT(R_MS);
 
 	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
 	const U threadId = rgraphCtx.m_currentSecondLevelCommandBufferIndex;
@@ -88,7 +79,7 @@ void GBuffer::runInThread(const RenderingContext& ctx, RenderPassWorkContext& rg
 	const PtrSize earlyZCount = ctx.m_renderQueue->m_earlyZRenderables.getSize();
 	const U problemSize = ctx.m_renderQueue->m_renderables.getSize() + earlyZCount;
 	PtrSize start, end;
-	ThreadPoolTask::choseStartEnd(threadId, threadCount, problemSize, start, end);
+	splitThreadedProblem(threadId, threadCount, problemSize, start, end);
 	ANKI_ASSERT(end != start);
 
 	// Set some state, leave the rest to default
@@ -98,6 +89,8 @@ void GBuffer::runInThread(const RenderingContext& ctx, RenderPassWorkContext& rg
 	const I32 earlyZEnd = min(I32(end), I32(earlyZCount));
 	const I32 colorStart = max(I32(start) - I32(earlyZCount), 0);
 	const I32 colorEnd = I32(end) - I32(earlyZCount);
+
+	cmdb->setRasterizationOrder(RasterizationOrder::RELAXED);
 
 	// First do early Z (if needed)
 	if(earlyZStart < earlyZEnd)
@@ -109,8 +102,9 @@ void GBuffer::runInThread(const RenderingContext& ctx, RenderPassWorkContext& rg
 
 		ANKI_ASSERT(earlyZStart < earlyZEnd && earlyZEnd <= I32(earlyZCount));
 		m_r->getSceneDrawer().drawRange(Pass::EZ,
-			ctx.m_renderQueue->m_viewMatrix,
-			ctx.m_viewProjMatJitter,
+			ctx.m_matrices.m_view,
+			ctx.m_matrices.m_viewProjectionJitter,
+			ctx.m_matrices.m_jitter * ctx.m_prevMatrices.m_viewProjection,
 			cmdb,
 			ctx.m_renderQueue->m_earlyZRenderables.getBegin() + earlyZStart,
 			ctx.m_renderQueue->m_earlyZRenderables.getBegin() + earlyZEnd);
@@ -131,9 +125,10 @@ void GBuffer::runInThread(const RenderingContext& ctx, RenderPassWorkContext& rg
 		cmdb->setDepthCompareOperation(CompareOperation::LESS_EQUAL);
 
 		ANKI_ASSERT(colorStart < colorEnd && colorEnd <= I32(ctx.m_renderQueue->m_renderables.getSize()));
-		m_r->getSceneDrawer().drawRange(Pass::GB_FS,
-			ctx.m_renderQueue->m_viewMatrix,
-			ctx.m_viewProjMatJitter,
+		m_r->getSceneDrawer().drawRange(Pass::GB,
+			ctx.m_matrices.m_view,
+			ctx.m_matrices.m_viewProjectionJitter,
+			ctx.m_matrices.m_jitter * ctx.m_prevMatrices.m_viewProjection,
 			cmdb,
 			ctx.m_renderQueue->m_renderables.getBegin() + colorStart,
 			ctx.m_renderQueue->m_renderables.getBegin() + colorEnd);
@@ -142,7 +137,7 @@ void GBuffer::runInThread(const RenderingContext& ctx, RenderPassWorkContext& rg
 
 void GBuffer::populateRenderGraph(RenderingContext& ctx)
 {
-	ANKI_TRACE_SCOPED_EVENT(RENDER_MS);
+	ANKI_TRACE_SCOPED_EVENT(R_MS);
 
 	m_ctx = &ctx;
 	RenderGraphDescription& rgraph = ctx.m_renderGraphDescr;
@@ -167,13 +162,11 @@ void GBuffer::populateRenderGraph(RenderingContext& ctx)
 
 	for(U i = 0; i < GBUFFER_COLOR_ATTACHMENT_COUNT; ++i)
 	{
-		pass.newConsumer({m_colorRts[i], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
-		pass.newProducer({m_colorRts[i], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
+		pass.newDependency({m_colorRts[i], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
 	}
 
 	TextureSubresourceInfo subresource(DepthStencilAspectBit::DEPTH);
-	pass.newConsumer({m_depthRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE, subresource});
-	pass.newProducer({m_depthRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE, subresource});
+	pass.newDependency({m_depthRt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE, subresource});
 }
 
 } // end namespace anki

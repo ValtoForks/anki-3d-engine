@@ -7,13 +7,12 @@
 
 #include <anki/scene/Common.h>
 #include <anki/scene/SceneNode.h>
-#include <anki/scene/Visibility.h>
 #include <anki/Math.h>
 #include <anki/util/Singleton.h>
 #include <anki/util/HighRezTimer.h>
 #include <anki/util/HashMap.h>
 #include <anki/core/App.h>
-#include <anki/event/EventManager.h>
+#include <anki/scene/events/EventManager.h>
 
 namespace anki
 {
@@ -23,10 +22,10 @@ class MainRenderer;
 class ResourceManager;
 class CameraNode;
 class Input;
-class SectorGroup;
 class ConfigSet;
 class PerspectiveCameraNode;
 class UpdateSceneNodesCtx;
+class Octree;
 
 /// @addtogroup scene
 /// @{
@@ -37,6 +36,7 @@ class SceneGraphStats
 public:
 	Second m_updateTime ANKI_DBG_NULLIFY;
 	Second m_visibilityTestsTime ANKI_DBG_NULLIFY;
+	Second m_physicsUpdate ANKI_DBG_NULLIFY;
 };
 
 /// The scene graph that  all the scene entities
@@ -52,8 +52,7 @@ public:
 
 	ANKI_USE_RESULT Error init(AllocAlignedCallback allocCb,
 		void* allocCbData,
-		ThreadPool* threadpool,
-		ThreadHive* thraedHive,
+		ThreadHive* threadHive,
 		ResourceManager* resources,
 		Input* input,
 		ScriptManager* scriptManager,
@@ -110,11 +109,6 @@ public:
 		return m_events;
 	}
 
-	ThreadPool& _getThreadPool()
-	{
-		return *m_threadpool;
-	}
-
 	ThreadHive& getThreadHive()
 	{
 		return *m_threadHive;
@@ -167,6 +161,16 @@ public:
 		return m_stats;
 	}
 
+	const Vec3& getSceneMin() const
+	{
+		return m_sceneMin;
+	}
+
+	const Vec3& getSceneMax() const
+	{
+		return m_sceneMax;
+	}
+
 anki_internal:
 	ResourceManager& getResourceManager()
 	{
@@ -200,12 +204,6 @@ anki_internal:
 		return *m_input;
 	}
 
-	SectorGroup& getSectorGroup()
-	{
-		ANKI_ASSERT(m_sectors);
-		return *m_sectors;
-	}
-
 	F32 getMaxReflectionProxyDistance() const
 	{
 		ANKI_ASSERT(m_maxReflectionProxyDistance > 0.0);
@@ -217,22 +215,24 @@ anki_internal:
 		return m_nodesUuid++;
 	}
 
-	SceneComponentLists& getSceneComponentLists()
-	{
-		return m_componentLists;
-	}
-
 	F32 getEarlyZDistance() const
 	{
 		return m_earlyZDist;
 	}
 
+	Octree& getOctree()
+	{
+		ANKI_ASSERT(m_octree);
+		return *m_octree;
+	}
+
 private:
+	class UpdateSceneNodesCtx;
+
 	const Timestamp* m_globalTimestamp = nullptr;
 	Timestamp m_timestamp = 0; ///< Cached timestamp
 
 	// Sub-systems
-	ThreadPool* m_threadpool = nullptr;
 	ThreadHive* m_threadHive = nullptr;
 	ResourceManager* m_resources = nullptr;
 	GrManager* m_gr = nullptr;
@@ -245,22 +245,24 @@ private:
 
 	IntrusiveList<SceneNode> m_nodes;
 	U32 m_nodesCount = 0;
-	HashMap<CString, SceneNode*, CStringHasher> m_nodesDict;
+	HashMap<CString, SceneNode*> m_nodesDict;
 
 	SceneNode* m_mainCam = nullptr;
 	Timestamp m_activeCameraChangeTimestamp = 0;
 	PerspectiveCameraNode* m_defaultMainCam = nullptr;
 
 	EventManager m_events;
-	SectorGroup* m_sectors;
+
+	Octree* m_octree = nullptr;
+
+	Vec3 m_sceneMin = {-1000.0f, -200.0f, -1000.0f};
+	Vec3 m_sceneMax = {1000.0f, 200.0f, 1000.0f};
 
 	Atomic<U32> m_objectsMarkedForDeletionCount;
 
 	F32 m_maxReflectionProxyDistance = 0.0;
 
 	U64 m_nodesUuid = 0;
-
-	SceneComponentLists m_componentLists;
 
 	F32 m_earlyZDist = -1.0;
 
@@ -275,6 +277,9 @@ private:
 
 	ANKI_USE_RESULT Error updateNodes(UpdateSceneNodesCtx& ctx) const;
 	ANKI_USE_RESULT static Error updateNode(Second prevTime, Second crntTime, SceneNode& node);
+
+	/// Do visibility tests.
+	static void doVisibilityTests(SceneNode& frustumable, SceneGraph& scene, RenderQueue& rqueue);
 };
 
 template<typename Node, typename... Args>

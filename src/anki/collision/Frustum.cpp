@@ -18,38 +18,31 @@ Frustum& Frustum::operator=(const Frustum& b)
 	m_planesL = b.m_planesL;
 	m_planesW = b.m_planesW;
 	m_trf = b.m_trf;
-	m_frustumDirty = b.m_frustumDirty;
 	return *this;
 }
 
 void Frustum::accept(MutableVisitor& v)
 {
-	update();
 	CompoundShape::accept(v);
 }
 
 void Frustum::accept(ConstVisitor& v) const
 {
-	update();
 	CompoundShape::accept(v);
 }
 
 F32 Frustum::testPlane(const Plane& p) const
 {
-	update();
 	return CompoundShape::testPlane(p);
 }
 
 void Frustum::computeAabb(Aabb& aabb) const
 {
-	update();
 	CompoundShape::computeAabb(aabb);
 }
 
 Bool Frustum::insideFrustum(const CollisionShape& b) const
 {
-	update();
-
 	for(const Plane& plane : m_planesW)
 	{
 		if(b.testPlane(plane) < 0.0)
@@ -70,39 +63,11 @@ void Frustum::transform(const Transform& trf)
 void Frustum::resetTransform(const Transform& trf)
 {
 	m_trf = trf;
-
-	if(m_frustumDirty)
-	{
-		// Update everything
-		updateInternal();
-	}
-	else
-	{
-		// Inform the child about the change
-		onTransform();
-
-		// Transform the planes
-		for(U i = 0; i < m_planesL.getSize(); ++i)
-		{
-			m_planesW[i] = m_planesL[i].getTransformed(m_trf);
-		}
-	}
+	update();
 }
 
-void Frustum::update() const
+void Frustum::update()
 {
-	Frustum& self = *const_cast<Frustum*>(this);
-	LockGuard<SpinLock> lock(self.m_lock);
-	if(self.m_frustumDirty)
-	{
-		self.updateInternal();
-	}
-}
-
-void Frustum::updateInternal()
-{
-	ANKI_ASSERT(m_frustumDirty);
-	m_frustumDirty = false;
 	recalculate();
 
 	// Transform derived
@@ -210,6 +175,8 @@ Mat4 OrthographicFrustum::calculateProjectionMatrix() const
 
 void OrthographicFrustum::recalculate()
 {
+	ANKI_ASSERT(m_left < m_right && m_far > m_near && m_bottom < m_top);
+
 	// Planes
 	m_planesL[FrustumPlaneType::LEFT] = Plane(Vec4(1.0f, 0.0f, 0.0f, 0.0f), m_left);
 	m_planesL[FrustumPlaneType::RIGHT] = Plane(Vec4(-1.0f, 0.0f, 0.0f, 0.0f), -m_right);

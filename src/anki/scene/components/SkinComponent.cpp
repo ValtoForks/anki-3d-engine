@@ -4,6 +4,7 @@
 // http://www.anki3d.org/LICENSE
 
 #include <anki/scene/components/SkinComponent.h>
+#include <anki/scene/SceneNode.h>
 #include <anki/resource/SkeletonResource.h>
 #include <anki/resource/AnimationResource.h>
 #include <anki/util/BitSet.h>
@@ -12,10 +13,13 @@ namespace anki
 {
 
 SkinComponent::SkinComponent(SceneNode* node, SkeletonResourcePtr skeleton)
-	: SceneComponent(CLASS_TYPE, node)
+	: SceneComponent(CLASS_TYPE)
+	, m_node(node)
 	, m_skeleton(skeleton)
 {
-	m_boneTrfs.create(getAllocator(), m_skeleton->getBones().getSize());
+	ANKI_ASSERT(node);
+
+	m_boneTrfs.create(m_node->getAllocator(), m_skeleton->getBones().getSize());
 	for(Mat4& trf : m_boneTrfs)
 	{
 		trf.setIdentity();
@@ -24,10 +28,10 @@ SkinComponent::SkinComponent(SceneNode* node, SkeletonResourcePtr skeleton)
 
 SkinComponent::~SkinComponent()
 {
-	m_boneTrfs.destroy(getAllocator());
+	m_boneTrfs.destroy(m_node->getAllocator());
 }
 
-void SkinComponent::playAnimation(U track, AnimationResourcePtr anim, F64 startTime, Bool repeat)
+void SkinComponent::playAnimation(U track, AnimationResourcePtr anim, Second startTime, Bool repeat)
 {
 	m_tracks[track].m_anim = anim;
 	m_tracks[track].m_time = startTime;
@@ -36,8 +40,10 @@ void SkinComponent::playAnimation(U track, AnimationResourcePtr anim, F64 startT
 
 Error SkinComponent::update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated)
 {
+	ANKI_ASSERT(&node == m_node);
+
 	updated = false;
-	const F64 timeDiff = crntTime - prevTime;
+	const Second timeDiff = crntTime - prevTime;
 
 	for(Track& track : m_tracks)
 	{
@@ -48,7 +54,7 @@ Error SkinComponent::update(SceneNode& node, Second prevTime, Second crntTime, B
 
 		updated = true;
 
-		const F64 animTime = track.m_time;
+		const Second animTime = track.m_time;
 		track.m_time += timeDiff;
 
 		// Iterate the animation channels and interpolate

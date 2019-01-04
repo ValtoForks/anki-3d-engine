@@ -17,23 +17,18 @@ static MainRenderer* getMainRenderer(lua_State* l)
 	LuaBinder* binder = nullptr;
 	lua_getallocf(l, reinterpret_cast<void**>(&binder));
 
-	ScriptManager* scriptManager = reinterpret_cast<ScriptManager*>(binder->getParent());
-
-	return &scriptManager->getMainRenderer();
+	MainRenderer* r = binder->getOtherSystems().m_renderer;
+	ANKI_ASSERT(r);
+	return r;
 }
 
-static const char* classnameDbg = "Dbg";
+LuaUserDataTypeInfo luaUserDataTypeInfoDbg = {
+	-2784798555522127122, "Dbg", LuaUserData::computeSizeForGarbageCollected<Dbg>(), nullptr, nullptr};
 
 template<>
-I64 LuaBinder::getWrappedTypeSignature<Dbg>()
+const LuaUserDataTypeInfo& LuaUserData::getDataTypeInfoFor<Dbg>()
 {
-	return -2784798555522127122;
-}
-
-template<>
-const char* LuaBinder::getWrappedTypeName<Dbg>()
-{
-	return classnameDbg;
+	return luaUserDataTypeInfoDbg;
 }
 
 /// Pre-wrap method Dbg::getEnabled.
@@ -46,10 +41,13 @@ static inline int pwrapDbggetEnabled(lua_State* l)
 	PtrSize size;
 	(void)size;
 
-	LuaBinder::checkArgsCount(l, 1);
+	if(ANKI_UNLIKELY(LuaBinder::checkArgsCount(l, 1)))
+	{
+		return -1;
+	}
 
 	// Get "this" as "self"
-	if(LuaBinder::checkUserData(l, 1, classnameDbg, -2784798555522127122, ud))
+	if(LuaBinder::checkUserData(l, 1, luaUserDataTypeInfoDbg, ud))
 	{
 		return -1;
 	}
@@ -88,10 +86,13 @@ static inline int pwrapDbgsetEnabled(lua_State* l)
 	PtrSize size;
 	(void)size;
 
-	LuaBinder::checkArgsCount(l, 2);
+	if(ANKI_UNLIKELY(LuaBinder::checkArgsCount(l, 2)))
+	{
+		return -1;
+	}
 
 	// Get "this" as "self"
-	if(LuaBinder::checkUserData(l, 1, classnameDbg, -2784798555522127122, ud))
+	if(LuaBinder::checkUserData(l, 1, luaUserDataTypeInfoDbg, ud))
 	{
 		return -1;
 	}
@@ -100,7 +101,7 @@ static inline int pwrapDbgsetEnabled(lua_State* l)
 
 	// Pop arguments
 	Bool arg0;
-	if(LuaBinder::checkNumber(l, 2, arg0))
+	if(ANKI_UNLIKELY(LuaBinder::checkNumber(l, 2, arg0)))
 	{
 		return -1;
 	}
@@ -127,24 +128,19 @@ static int wrapDbgsetEnabled(lua_State* l)
 /// Wrap class Dbg.
 static inline void wrapDbg(lua_State* l)
 {
-	LuaBinder::createClass(l, classnameDbg);
+	LuaBinder::createClass(l, &luaUserDataTypeInfoDbg);
 	LuaBinder::pushLuaCFuncMethod(l, "getEnabled", wrapDbggetEnabled);
 	LuaBinder::pushLuaCFuncMethod(l, "setEnabled", wrapDbgsetEnabled);
 	lua_settop(l, 0);
 }
 
-static const char* classnameMainRenderer = "MainRenderer";
+LuaUserDataTypeInfo luaUserDataTypeInfoMainRenderer = {
+	919289102518575326, "MainRenderer", LuaUserData::computeSizeForGarbageCollected<MainRenderer>(), nullptr, nullptr};
 
 template<>
-I64 LuaBinder::getWrappedTypeSignature<MainRenderer>()
+const LuaUserDataTypeInfo& LuaUserData::getDataTypeInfoFor<MainRenderer>()
 {
-	return 919289102518575326;
-}
-
-template<>
-const char* LuaBinder::getWrappedTypeName<MainRenderer>()
-{
-	return classnameMainRenderer;
+	return luaUserDataTypeInfoMainRenderer;
 }
 
 /// Pre-wrap method MainRenderer::getAspectRatio.
@@ -157,10 +153,13 @@ static inline int pwrapMainRenderergetAspectRatio(lua_State* l)
 	PtrSize size;
 	(void)size;
 
-	LuaBinder::checkArgsCount(l, 1);
+	if(ANKI_UNLIKELY(LuaBinder::checkArgsCount(l, 1)))
+	{
+		return -1;
+	}
 
 	// Get "this" as "self"
-	if(LuaBinder::checkUserData(l, 1, classnameMainRenderer, 919289102518575326, ud))
+	if(LuaBinder::checkUserData(l, 1, luaUserDataTypeInfoMainRenderer, ud))
 	{
 		return -1;
 	}
@@ -192,7 +191,7 @@ static int wrapMainRenderergetAspectRatio(lua_State* l)
 /// Wrap class MainRenderer.
 static inline void wrapMainRenderer(lua_State* l)
 {
-	LuaBinder::createClass(l, classnameMainRenderer);
+	LuaBinder::createClass(l, &luaUserDataTypeInfoMainRenderer);
 	LuaBinder::pushLuaCFuncMethod(l, "getAspectRatio", wrapMainRenderergetAspectRatio);
 	lua_settop(l, 0);
 }
@@ -207,7 +206,10 @@ static inline int pwrapgetMainRenderer(lua_State* l)
 	PtrSize size;
 	(void)size;
 
-	LuaBinder::checkArgsCount(l, 0);
+	if(ANKI_UNLIKELY(LuaBinder::checkArgsCount(l, 0)))
+	{
+		return -1;
+	}
 
 	// Call the function
 	MainRenderer* ret = getMainRenderer(l);
@@ -222,7 +224,8 @@ static inline int pwrapgetMainRenderer(lua_State* l)
 	voidp = lua_newuserdata(l, sizeof(LuaUserData));
 	ud = static_cast<LuaUserData*>(voidp);
 	luaL_setmetatable(l, "MainRenderer");
-	ud->initPointed(919289102518575326, const_cast<MainRenderer*>(ret));
+	extern LuaUserDataTypeInfo luaUserDataTypeInfoMainRenderer;
+	ud->initPointed(&luaUserDataTypeInfoMainRenderer, const_cast<MainRenderer*>(ret));
 
 	return 1;
 }

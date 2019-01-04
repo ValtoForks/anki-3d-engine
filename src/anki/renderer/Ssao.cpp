@@ -24,18 +24,26 @@ Error Ssao::initMain(const ConfigSet& config)
 	ANKI_CHECK(getResourceManager().loadResource("engine_data/BlueNoiseLdrRgb64x64.ankitex", m_main.m_noiseTex));
 
 	// Shader
-	ANKI_CHECK(getResourceManager().loadResource("programs/Ssao.ankiprog", m_main.m_prog));
+	if(m_useCompute)
+	{
+		ANKI_CHECK(getResourceManager().loadResource("shaders/SsaoCompute.glslp", m_main.m_prog));
+	}
+	else
+	{
+		ANKI_CHECK(getResourceManager().loadResource("shaders/Ssao.glslp", m_main.m_prog));
+	}
 
-	ShaderProgramResourceMutationInitList<1> mutators(m_main.m_prog);
-	mutators.add("USE_NORMAL", 0u);
+	ShaderProgramResourceMutationInitList<2> mutators(m_main.m_prog);
+	mutators.add("USE_NORMAL", (m_useNormal) ? 1u : 0u).add("SOFT_BLUR", (m_useSoftBlur) ? 1u : 0u);
 
-	ShaderProgramResourceConstantValueInitList<6> consts(m_main.m_prog);
+	ShaderProgramResourceConstantValueInitList<7> consts(m_main.m_prog);
 	consts.add("NOISE_MAP_SIZE", U32(m_main.m_noiseTex->getWidth()))
 		.add("FB_SIZE", UVec2(m_width, m_height))
 		.add("RADIUS", 2.5f)
 		.add("BIAS", 0.0f)
 		.add("STRENGTH", 2.5f)
-		.add("SAMPLE_COUNT", 4u);
+		.add("SAMPLE_COUNT", 8u)
+		.add("WORKGROUP_SIZE", UVec2(m_workgroupSize[0], m_workgroupSize[1]));
 	const ShaderProgramResourceVariant* variant;
 	m_main.m_prog->getOrCreateVariant(mutators.get(), consts.get(), variant);
 	m_main.m_grProg = variant->getProgram();
@@ -43,38 +51,38 @@ Error Ssao::initMain(const ConfigSet& config)
 	return Error::NONE;
 }
 
-Error Ssao::initHBlur(const ConfigSet& config)
+Error Ssao::initBlur(const ConfigSet& config)
 {
 	// shader
-	ANKI_CHECK(m_r->getResourceManager().loadResource("programs/DepthAwareBlur.ankiprog", m_hblur.m_prog));
+	if(m_blurUseCompute)
+	{
+		ANKI_CHECK(m_r->getResourceManager().loadResource("shaders/GaussianBlurCompute.glslp", m_blur.m_prog));
 
-	ShaderProgramResourceMutationInitList<3> mutators(m_hblur.m_prog);
-	mutators.add("HORIZONTAL", 1).add("KERNEL_SIZE", 9).add("COLOR_COMPONENTS", 1);
-	ShaderProgramResourceConstantValueInitList<1> consts(m_hblur.m_prog);
-	consts.add("TEXTURE_SIZE", UVec2(m_width, m_height));
+		ShaderProgramResourceMutationInitList<3> mutators(m_blur.m_prog);
+		mutators.add("ORIENTATION", 2).add("KERNEL_SIZE", 3).add("COLOR_COMPONENTS", 1);
+		ShaderProgramResourceConstantValueInitList<2> consts(m_blur.m_prog);
+		consts.add("TEXTURE_SIZE", UVec2(m_width, m_height))
+			.add("WORKGROUP_SIZE", UVec2(m_workgroupSize[0], m_workgroupSize[1]));
 
-	const ShaderProgramResourceVariant* variant;
-	m_hblur.m_prog->getOrCreateVariant(mutators.get(), consts.get(), variant);
+		const ShaderProgramResourceVariant* variant;
+		m_blur.m_prog->getOrCreateVariant(mutators.get(), consts.get(), variant);
 
-	m_hblur.m_grProg = variant->getProgram();
+		m_blur.m_grProg = variant->getProgram();
+	}
+	else
+	{
+		ANKI_CHECK(m_r->getResourceManager().loadResource("shaders/GaussianBlur.glslp", m_blur.m_prog));
 
-	return Error::NONE;
-}
+		ShaderProgramResourceMutationInitList<3> mutators(m_blur.m_prog);
+		mutators.add("ORIENTATION", 2).add("KERNEL_SIZE", 3).add("COLOR_COMPONENTS", 1);
+		ShaderProgramResourceConstantValueInitList<1> consts(m_blur.m_prog);
+		consts.add("TEXTURE_SIZE", UVec2(m_width, m_height));
 
-Error Ssao::initVBlur(const ConfigSet& config)
-{
-	// shader
-	ANKI_CHECK(m_r->getResourceManager().loadResource("programs/DepthAwareBlur.ankiprog", m_vblur.m_prog));
+		const ShaderProgramResourceVariant* variant;
+		m_blur.m_prog->getOrCreateVariant(mutators.get(), consts.get(), variant);
 
-	ShaderProgramResourceMutationInitList<3> mutators(m_vblur.m_prog);
-	mutators.add("HORIZONTAL", 0).add("KERNEL_SIZE", 9).add("COLOR_COMPONENTS", 1);
-	ShaderProgramResourceConstantValueInitList<1> consts(m_vblur.m_prog);
-	consts.add("TEXTURE_SIZE", UVec2(m_width, m_height));
-
-	const ShaderProgramResourceVariant* variant;
-	m_vblur.m_prog->getOrCreateVariant(mutators.get(), consts.get(), variant);
-
-	m_vblur.m_grProg = variant->getProgram();
+		m_blur.m_grProg = variant->getProgram();
+	}
 
 	return Error::NONE;
 }
@@ -87,12 +95,11 @@ Error Ssao::init(const ConfigSet& config)
 	ANKI_R_LOGI("Initializing SSAO. Size %ux%u", m_width, m_height);
 
 	// RT
-	m_rtDescr = m_r->create2DRenderTargetDescription(m_width,
-		m_height,
-		Ssao::RT_PIXEL_FORMAT,
-		TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE | TextureUsageBit::CLEAR,
-		"SSAO");
-	m_rtDescr.bake();
+	m_rtDescrs[0] = m_r->create2DRenderTargetDescription(m_width, m_height, RT_PIXEL_FORMAT, "SSAOMain");
+	m_rtDescrs[0].bake();
+
+	m_rtDescrs[1] = m_r->create2DRenderTargetDescription(m_width, m_height, RT_PIXEL_FORMAT, "SSAOBlur");
+	m_rtDescrs[1].bake();
 
 	// FB descr
 	m_fbDescr.m_colorAttachmentCount = 1;
@@ -103,12 +110,7 @@ Error Ssao::init(const ConfigSet& config)
 
 	if(!err)
 	{
-		err = initHBlur(config);
-	}
-
-	if(!err)
-	{
-		err = initVBlur(config);
+		err = initBlur(config);
 	}
 
 	if(err)
@@ -123,16 +125,19 @@ void Ssao::runMain(const RenderingContext& ctx, RenderPassWorkContext& rgraphCtx
 {
 	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
 
-	cmdb->setViewport(0, 0, m_width, m_height);
 	cmdb->bindShaderProgram(m_main.m_grProg);
 
-	rgraphCtx.bindTextureAndSampler(
-		0, 0, m_r->getDepthDownscale().getHiZRt(), HIZ_QUARTER_DEPTH, m_r->getLinearSampler());
+	rgraphCtx.bindTextureAndSampler(0, 0, m_r->getDepthDownscale().getHiZRt(), HIZ_HALF_DEPTH, m_r->getLinearSampler());
 	cmdb->bindTextureAndSampler(0,
 		1,
 		m_main.m_noiseTex->getGrTextureView(),
 		m_r->getTrilinearRepeatSampler(),
 		TextureUsageBit::SAMPLED_FRAGMENT);
+
+	if(m_useNormal)
+	{
+		rgraphCtx.bindColorTextureAndSampler(0, 2, m_r->getGBuffer().getColorRt(2), m_r->getLinearSampler());
+	}
 
 	struct Unis
 	{
@@ -147,31 +152,38 @@ void Ssao::runMain(const RenderingContext& ctx, RenderPassWorkContext& rgraphCtx
 	unis->m_projectionMat = Vec4(pmat(0, 0), pmat(1, 1), pmat(2, 2), pmat(2, 3));
 	unis->m_viewRotMat = Mat3x4(ctx.m_renderQueue->m_viewMatrix.getRotationPart());
 
-	drawQuad(cmdb);
+	if(m_useCompute)
+	{
+		rgraphCtx.bindImage(0, 0, m_runCtx.m_rts[0], TextureSubresourceInfo());
+
+		const U sizeX = (m_width + m_workgroupSize[0] - 1) / m_workgroupSize[0];
+		const U sizeY = (m_height + m_workgroupSize[1] - 1) / m_workgroupSize[1];
+		cmdb->dispatchCompute(sizeX, sizeY, 1);
+	}
+	else
+	{
+		cmdb->setViewport(0, 0, m_width, m_height);
+		drawQuad(cmdb);
+	}
 }
 
-void Ssao::runHBlur(RenderPassWorkContext& rgraphCtx)
+void Ssao::runBlur(RenderPassWorkContext& rgraphCtx)
 {
 	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
 
-	cmdb->setViewport(0, 0, m_width, m_height);
-	cmdb->bindShaderProgram(m_hblur.m_grProg);
+	cmdb->bindShaderProgram(m_blur.m_grProg);
 	rgraphCtx.bindColorTextureAndSampler(0, 0, m_runCtx.m_rts[0], m_r->getLinearSampler());
-	rgraphCtx.bindTextureAndSampler(
-		0, 1, m_r->getDepthDownscale().getHiZRt(), HIZ_QUARTER_DEPTH, m_r->getLinearSampler());
-	drawQuad(cmdb);
-}
 
-void Ssao::runVBlur(RenderPassWorkContext& rgraphCtx)
-{
-	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
-
-	cmdb->setViewport(0, 0, m_width, m_height);
-	cmdb->bindShaderProgram(m_vblur.m_grProg);
-	rgraphCtx.bindColorTextureAndSampler(0, 0, m_runCtx.m_rts[1], m_r->getLinearSampler());
-	rgraphCtx.bindTextureAndSampler(
-		0, 1, m_r->getDepthDownscale().getHiZRt(), HIZ_QUARTER_DEPTH, m_r->getLinearSampler());
-	drawQuad(cmdb);
+	if(m_blurUseCompute)
+	{
+		rgraphCtx.bindImage(0, 0, m_runCtx.m_rts[1], TextureSubresourceInfo());
+		dispatchPPCompute(cmdb, m_workgroupSize[0], m_workgroupSize[1], m_width, m_height);
+	}
+	else
+	{
+		cmdb->setViewport(0, 0, m_width, m_height);
+		drawQuad(cmdb);
+	}
 }
 
 void Ssao::populateRenderGraph(RenderingContext& ctx)
@@ -180,46 +192,65 @@ void Ssao::populateRenderGraph(RenderingContext& ctx)
 	RenderGraphDescription& rgraph = ctx.m_renderGraphDescr;
 
 	// Create RTs
-	m_runCtx.m_rts[0] = rgraph.newRenderTarget(m_rtDescr);
-	m_runCtx.m_rts[1] = rgraph.newRenderTarget(m_rtDescr);
+	m_runCtx.m_rts[0] = rgraph.newRenderTarget(m_rtDescrs[0]);
+	m_runCtx.m_rts[1] = rgraph.newRenderTarget(m_rtDescrs[1]);
 
 	// Create main render pass
 	{
-		GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass("SSAO main");
+		if(m_useCompute)
+		{
+			ComputeRenderPassDescription& pass = rgraph.newComputeRenderPass("SSAO main");
 
-		pass.setWork(runMainCallback, this, 0);
-		pass.setFramebufferInfo(m_fbDescr, {{m_runCtx.m_rts[0]}}, {});
+			if(m_useNormal)
+			{
+				pass.newDependency({m_r->getGBuffer().getColorRt(2), TextureUsageBit::SAMPLED_COMPUTE});
+			}
 
-		pass.newConsumer({m_r->getGBuffer().getColorRt(2), TextureUsageBit::SAMPLED_FRAGMENT});
-		pass.newConsumer({m_r->getDepthDownscale().getHiZRt(), TextureUsageBit::SAMPLED_FRAGMENT, HIZ_QUARTER_DEPTH});
-		pass.newConsumer({m_runCtx.m_rts[0], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
-		pass.newProducer({m_runCtx.m_rts[0], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
+			pass.newDependency({m_r->getDepthDownscale().getHiZRt(), TextureUsageBit::SAMPLED_COMPUTE, HIZ_HALF_DEPTH});
+			pass.newDependency({m_runCtx.m_rts[0], TextureUsageBit::IMAGE_COMPUTE_WRITE});
+
+			pass.setWork(runMainCallback, this, 0);
+		}
+		else
+		{
+			GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass("SSAO main");
+
+			pass.setFramebufferInfo(m_fbDescr, {{m_runCtx.m_rts[0]}}, {});
+
+			if(m_useNormal)
+			{
+				pass.newDependency({m_r->getGBuffer().getColorRt(2), TextureUsageBit::SAMPLED_FRAGMENT});
+			}
+
+			pass.newDependency(
+				{m_r->getDepthDownscale().getHiZRt(), TextureUsageBit::SAMPLED_FRAGMENT, HIZ_HALF_DEPTH});
+			pass.newDependency({m_runCtx.m_rts[0], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
+
+			pass.setWork(runMainCallback, this, 0);
+		}
 	}
 
-	// Create HBlur pass
+	// Create Blur pass
 	{
-		GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass("SSAO hblur");
+		if(m_blurUseCompute)
+		{
+			ComputeRenderPassDescription& pass = rgraph.newComputeRenderPass("SSAO blur");
 
-		pass.setWork(runHBlurCallback, this, 0);
-		pass.setFramebufferInfo(m_fbDescr, {{m_runCtx.m_rts[1]}}, {});
+			pass.setWork(runBlurCallback, this, 0);
 
-		pass.newConsumer({m_runCtx.m_rts[1], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
-		pass.newConsumer({m_runCtx.m_rts[0], TextureUsageBit::SAMPLED_FRAGMENT});
-		pass.newConsumer({m_r->getDepthDownscale().getHiZRt(), TextureUsageBit::SAMPLED_FRAGMENT, HIZ_QUARTER_DEPTH});
-		pass.newProducer({m_runCtx.m_rts[1], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
-	}
+			pass.newDependency({m_runCtx.m_rts[1], TextureUsageBit::IMAGE_COMPUTE_WRITE});
+			pass.newDependency({m_runCtx.m_rts[0], TextureUsageBit::SAMPLED_COMPUTE});
+		}
+		else
+		{
+			GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass("SSAO blur");
 
-	// Create VBlur pass
-	{
-		GraphicsRenderPassDescription& pass = rgraph.newGraphicsRenderPass("SSAO vblur");
+			pass.setWork(runBlurCallback, this, 0);
+			pass.setFramebufferInfo(m_fbDescr, {{m_runCtx.m_rts[1]}}, {});
 
-		pass.setWork(runVBlurCallback, this, 0);
-		pass.setFramebufferInfo(m_fbDescr, {{m_runCtx.m_rts[0]}}, {});
-
-		pass.newConsumer({m_runCtx.m_rts[0], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
-		pass.newConsumer({m_runCtx.m_rts[1], TextureUsageBit::SAMPLED_FRAGMENT});
-		pass.newConsumer({m_r->getDepthDownscale().getHiZRt(), TextureUsageBit::SAMPLED_FRAGMENT, HIZ_QUARTER_DEPTH});
-		pass.newProducer({m_runCtx.m_rts[0], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
+			pass.newDependency({m_runCtx.m_rts[1], TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
+			pass.newDependency({m_runCtx.m_rts[0], TextureUsageBit::SAMPLED_FRAGMENT});
+		}
 	}
 }
 

@@ -5,10 +5,9 @@
 
 // Tonemapping resources
 
-#ifndef ANKI_SHADERS_TONEMAPPING_RESOURCES_GLSL
-#define ANKI_SHADERS_TONEMAPPING_RESOURCES_GLSL
+#pragma once
 
-#include "shaders/Common.glsl"
+#include <shaders/Common.glsl>
 
 #ifndef TONEMAPPING_SET
 #	define TONEMAPPING_SET 0
@@ -28,10 +27,8 @@ layout(std140, ANKI_SS_BINDING(TONEMAPPING_SET, TONEMAPPING_BINDING)) buffer tms
 layout(std140, ANKI_UBO_BINDING(TONEMAPPING_SET, TONEMAPPING_BINDING)) uniform tmu0_
 #endif
 {
-	vec4 u_averageLuminanceExposurePad2;
+	Vec4 u_averageLuminanceExposurePad2;
 };
 
 #define u_averageLuminance u_averageLuminanceExposurePad2.x
 #define u_exposureThreshold0 u_averageLuminanceExposurePad2.y
-
-#endif

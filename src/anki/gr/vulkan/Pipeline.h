@@ -85,6 +85,7 @@ class PPRasterizerStateInfo : public NonCopyable
 public:
 	FillMode m_fillMode = FillMode::SOLID;
 	FaceSelectionBit m_cullMode = FaceSelectionBit::BACK;
+	RasterizationOrder m_rasterizationOrder = RasterizationOrder::ORDERED;
 	F32 m_depthBiasConstantFactor = 0.0;
 	F32 m_depthBiasSlopeFactor = 0.0;
 };
@@ -175,6 +176,8 @@ public:
 /// Track changes in the static state.
 class PipelineStateTracker : public NonCopyable
 {
+	friend class PipelineFactory;
+
 public:
 	PipelineStateTracker()
 	{
@@ -244,6 +247,15 @@ public:
 		{
 			m_state.m_rasterizer.m_depthBiasConstantFactor = factor;
 			m_state.m_rasterizer.m_depthBiasSlopeFactor = units;
+			m_dirty.m_other |= DirtyBit::RASTER;
+		}
+	}
+
+	void setRasterizationOrder(RasterizationOrder order)
+	{
+		if(m_state.m_rasterizer.m_rasterizationOrder != order)
+		{
+			m_state.m_rasterizer.m_rasterizationOrder = order;
 			m_dirty.m_other |= DirtyBit::RASTER;
 		}
 	}
@@ -373,7 +385,7 @@ public:
 		m_fbDepth = d;
 		m_fbStencil = s;
 		m_rpass = fbimpl.getCompatibleRenderPass();
-		m_defaultFb = fbimpl.isDefaultFramebuffer();
+		m_defaultFb = fbimpl.hasPresentableTexture();
 		m_fb = fb;
 	}
 
@@ -512,6 +524,7 @@ private:
 		VkPipelineColorBlendStateCreateInfo m_color;
 		VkPipelineDynamicStateCreateInfo m_dyn;
 		VkGraphicsPipelineCreateInfo m_ppline;
+		VkPipelineRasterizationStateRasterizationOrderAMD m_rasterOrder;
 	} m_ci;
 
 	Bool updateHashes();

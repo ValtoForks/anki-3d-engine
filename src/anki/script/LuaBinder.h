@@ -11,6 +11,7 @@
 #include <anki/util/Allocator.h>
 #include <anki/util/String.h>
 #include <anki/util/Functions.h>
+#include <anki/util/HashMap.h>
 #include <lua.hpp>
 #ifndef ANKI_LUA_HPP
 #	error "Wrong LUA header included"
@@ -19,8 +20,30 @@
 namespace anki
 {
 
+// Forward
+class LuaUserData;
+class SceneGraph;
+class MainRenderer;
+
 /// @addtogroup script
 /// @{
+
+/// @memberof LuaUserData
+using LuaUserDataSerializeCallback = void (*)(LuaUserData& self, void* data, PtrSize& size);
+
+/// @memberof LuaUserData
+using LuaUserDataDeserializeCallback = void (*)(const void* data, LuaUserData& self);
+
+/// @memberof LuaUserData
+class LuaUserDataTypeInfo
+{
+public:
+	I64 m_signature;
+	const char* m_typeName;
+	PtrSize m_structureSize;
+	LuaUserDataSerializeCallback m_serializeCallback;
+	LuaUserDataDeserializeCallback m_deserializeCallback;
+};
 
 /// LUA userdata.
 class LuaUserData
@@ -34,15 +57,19 @@ public:
 		return m_sig;
 	}
 
-	void initGarbageCollected(I64 sig)
+	void initGarbageCollected(const LuaUserDataTypeInfo* info)
 	{
-		m_sig = sig;
+		ANKI_ASSERT(info);
+		m_sig = info->m_signature;
+		m_info = info;
 		m_addressOrGarbageCollect = GC_MASK;
 	}
 
-	void initPointed(I64 sig, void* ptrToObject)
+	void initPointed(const LuaUserDataTypeInfo* info, void* ptrToObject)
 	{
-		m_sig = sig;
+		ANKI_ASSERT(info);
+		m_sig = info->m_signature;
+		m_info = info;
 		U64 addr = ptrToNumber(ptrToObject);
 		ANKI_ASSERT((addr & GC_MASK) == 0 && "Address too high, cannot encode a flag");
 		m_addressOrGarbageCollect = addr;
@@ -58,6 +85,7 @@ public:
 	T* getData()
 	{
 		ANKI_ASSERT(m_addressOrGarbageCollect != 0);
+		ANKI_ASSERT(getDataTypeInfoFor<T>().m_signature == m_sig);
 		T* out = nullptr;
 		if(isGarbageCollected())
 		{
@@ -84,47 +112,39 @@ public:
 		return getAlignedRoundUp(alignof(T), sizeof(LuaUserData)) + sizeof(T);
 	}
 
+	const LuaUserDataTypeInfo& getDataTypeInfo() const
+	{
+		ANKI_ASSERT(m_info);
+		return *m_info;
+	}
+
+	template<typename TWrapedType>
+	static const LuaUserDataTypeInfo& getDataTypeInfoFor();
+
 private:
 	static constexpr U64 GC_MASK = U64(1) << U64(63);
 
 	I64 m_sig = 0; ///< Signature to identify the user data.
 
 	U64 m_addressOrGarbageCollect = 0; ///< Encodes an address or a flag if it's for garbage collection.
+
+	const LuaUserDataTypeInfo* m_info = nullptr;
 };
 
-/// An instance of the original lua state with its own state.
-class LuaThread : public NonCopyable
+/// @memberof LuaBinder
+class LuaBinderSerializeGlobalsCallback
 {
-	friend class LuaBinder;
-
 public:
-	lua_State* m_luaState = nullptr;
+	virtual void write(const void* data, PtrSize dataSize) = 0;
+};
 
-	LuaThread() = default;
-
-	LuaThread(LuaThread&& b)
-	{
-		*this = std::move(b);
-	}
-
-	~LuaThread()
-	{
-		ANKI_ASSERT(m_luaState == nullptr && "Forgot to deleteLuaThread");
-	}
-
-	LuaThread& operator=(LuaThread&& b)
-	{
-		ANKI_ASSERT(m_luaState == nullptr);
-		m_luaState = b.m_luaState;
-		b.m_luaState = nullptr;
-
-		m_reference = b.m_reference;
-		b.m_reference = -1;
-		return *this;
-	}
-
-private:
-	int m_reference = -1;
+/// A list of systems that the LuaBinder should be aware of.
+/// @memberof LuaBinder
+class LuaBinderOtherSystems
+{
+public:
+	SceneGraph* m_sceneGraph;
+	MainRenderer* m_renderer;
 };
 
 /// Lua binder class. A wrapper on top of LUA
@@ -134,10 +154,11 @@ public:
 	LuaBinder();
 	~LuaBinder();
 
-	ANKI_USE_RESULT Error create(ScriptAllocator alloc, void* parent);
+	ANKI_USE_RESULT Error init(ScriptAllocator alloc, LuaBinderOtherSystems* otherSystems);
 
 	lua_State* getLuaState()
 	{
+		ANKI_ASSERT(m_l);
 		return m_l;
 	}
 
@@ -146,9 +167,10 @@ public:
 		return m_alloc;
 	}
 
-	void* getParent() const
+	LuaBinderOtherSystems& getOtherSystems()
 	{
-		return m_parent;
+		ANKI_ASSERT(m_otherSystems);
+		return *m_otherSystems;
 	}
 
 	/// Expose a variable to the lua state
@@ -157,8 +179,8 @@ public:
 	{
 		void* ptr = lua_newuserdata(state, sizeof(LuaUserData));
 		LuaUserData* ud = static_cast<LuaUserData*>(ptr);
-		ud->initPointed(getWrappedTypeSignature<T>(), y);
-		luaL_setmetatable(state, getWrappedTypeName<T>());
+		ud->initPointed(&LuaUserData::getDataTypeInfoFor<T>(), y);
+		luaL_setmetatable(state, LuaUserData::getDataTypeInfoFor<T>().m_typeName);
 		lua_setglobal(state, name.cstr());
 	}
 
@@ -167,8 +189,8 @@ public:
 	{
 		void* ptr = lua_newuserdata(state, sizeof(LuaUserData));
 		LuaUserData* ud = static_cast<LuaUserData*>(ptr);
-		ud->initPointed(getWrappedTypeSignature<T>(), y);
-		luaL_setmetatable(state, getWrappedTypeName<T>());
+		ud->initPointed(&LuaUserData::getDataTypeInfoFor<T>(), y);
+		luaL_setmetatable(state, LuaUserData::getDataTypeInfoFor<T>().m_typeName);
 	}
 
 	/// Evaluate a string
@@ -179,20 +201,11 @@ public:
 		lua_gc(state, LUA_GCCOLLECT, 0);
 	}
 
-	/// New LuaThread.
-	LuaThread newLuaThread();
-
-	/// Destroy a LuaThread.
-	void destroyLuaThread(LuaThread& luaThread);
-
 	/// For debugging purposes
 	static void stackDump(lua_State* l);
 
-	/// Make sure that the arguments match the argsCount number
-	static void checkArgsCount(lua_State* l, I argsCount);
-
 	/// Create a new LUA class
-	static void createClass(lua_State* l, const char* className);
+	static void createClass(lua_State* l, const LuaUserDataTypeInfo* typeInfo);
 
 	/// Add new function in a class that it's already in the stack
 	static void pushLuaCFuncMethod(lua_State* l, const char* name, lua_CFunction luafunc);
@@ -202,6 +215,15 @@ public:
 
 	/// Add a new function.
 	static void pushLuaCFunc(lua_State* l, const char* name, lua_CFunction luafunc);
+
+	/// Dump global variables.
+	static void serializeGlobals(lua_State* l, LuaBinderSerializeGlobalsCallback& callback);
+
+	/// Deserialize global variables.
+	static void deserializeGlobals(lua_State* l, const void* data, PtrSize dataSize);
+
+	/// Make sure that the arguments match the argsCount number
+	static ANKI_USE_RESULT Error checkArgsCount(lua_State* l, I argsCount);
 
 	/// Get a number from the stack.
 	template<typename TNumber>
@@ -223,7 +245,7 @@ public:
 	/// The function uses the type signature to validate the type and not the
 	/// typeName. That is supposed to be faster.
 	static ANKI_USE_RESULT Error checkUserData(
-		lua_State* l, I32 stackIdx, const char* typeName, I64 typeSignature, LuaUserData*& out);
+		lua_State* l, I32 stackIdx, const LuaUserDataTypeInfo& typeInfo, LuaUserData*& out);
 
 	/// Allocate memory.
 	static void* luaAlloc(lua_State* l, size_t size, U32 alignment);
@@ -231,16 +253,11 @@ public:
 	/// Free memory.
 	static void luaFree(lua_State* l, void* ptr);
 
-	template<typename TWrapedType>
-	static I64 getWrappedTypeSignature();
-
-	template<typename TWrapedType>
-	static const char* getWrappedTypeName();
-
 private:
+	LuaBinderOtherSystems* m_otherSystems;
 	ScriptAllocator m_alloc;
 	lua_State* m_l = nullptr;
-	void* m_parent = nullptr; ///< Point to the ScriptManager
+	HashMap<I64, const LuaUserDataTypeInfo*> m_userDataSigToDataInfo;
 
 	static void* luaAllocCallback(void* userData, void* ptr, PtrSize osize, PtrSize nsize);
 

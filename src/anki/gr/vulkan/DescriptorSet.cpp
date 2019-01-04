@@ -24,7 +24,7 @@ public:
 };
 
 /// Per thread allocator.
-class DSThreadAllocator : public NonCopyable
+class alignas(ANKI_CACHE_LINE_SIZE) DSThreadAllocator : public NonCopyable
 {
 public:
 	const DSLayoutCacheEntry* m_layoutEntry; ///< Know your father.
@@ -390,28 +390,18 @@ Error DSLayoutCacheEntry::init(const DescriptorBinding* bindings, U bindingCount
 		if(j == poolSizeCount)
 		{
 			m_poolSizesCreateInf[poolSizeCount].type = convertDescriptorType(bindings[i].m_type);
-
-			switch(m_poolSizesCreateInf[poolSizeCount].type)
-			{
-			case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-				m_poolSizesCreateInf[poolSizeCount].descriptorCount = MAX_TEXTURE_BINDINGS;
-				break;
-			case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-				m_poolSizesCreateInf[poolSizeCount].descriptorCount = MAX_UNIFORM_BUFFER_BINDINGS;
-				break;
-			case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-				m_poolSizesCreateInf[poolSizeCount].descriptorCount = MAX_STORAGE_BUFFER_BINDINGS;
-				break;
-			case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-				m_poolSizesCreateInf[poolSizeCount].descriptorCount = MAX_IMAGE_BINDINGS;
-				break;
-			default:
-				ANKI_ASSERT(0);
-			}
-
 			m_poolSizesCreateInf[poolSizeCount].descriptorCount = 1;
 			++poolSizeCount;
 		}
+	}
+
+	if(poolSizeCount == 0)
+	{
+		// If the poolSizeCount it means that the DS layout has 0 descriptors. Since the pool sizes can't be zero put
+		// something in them
+		m_poolSizesCreateInf[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+		m_poolSizesCreateInf[0].descriptorCount = 1;
+		++poolSizeCount;
 	}
 
 	ANKI_ASSERT(poolSizeCount > 0);
@@ -621,14 +611,13 @@ Error DescriptorSetFactory::newDescriptorSet(ThreadId tid,
 	Array<U32, MAX_UNIFORM_BUFFER_BINDINGS + MAX_STORAGE_BUFFER_BINDINGS>& dynamicOffsets,
 	U& dynamicOffsetCount)
 {
-	ANKI_TRACE_START_EVENT(VK_DESCRIPTOR_SET_GET_OR_CREATE);
+	ANKI_TRACE_SCOPED_EVENT(VK_DESCRIPTOR_SET_GET_OR_CREATE);
 
 	U64 hash;
 	state.flush(dirty, hash, dynamicOffsets, dynamicOffsetCount);
 
 	if(!dirty)
 	{
-		ANKI_TRACE_STOP_EVENT(VK_DESCRIPTOR_SET_GET_OR_CREATE);
 		return Error::NONE;
 	}
 
@@ -645,7 +634,6 @@ Error DescriptorSetFactory::newDescriptorSet(ThreadId tid,
 	set.m_handle = s->m_handle;
 	ANKI_ASSERT(set.m_handle != VK_NULL_HANDLE);
 
-	ANKI_TRACE_STOP_EVENT(VK_DESCRIPTOR_SET_GET_OR_CREATE);
 	return Error::NONE;
 }
 

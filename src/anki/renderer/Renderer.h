@@ -7,11 +7,11 @@
 
 #include <anki/renderer/Common.h>
 #include <anki/renderer/Drawer.h>
+#include <anki/renderer/ClusterBin.h>
 #include <anki/Math.h>
 #include <anki/Gr.h>
 #include <anki/resource/Forward.h>
 #include <anki/core/StagingGpuMemoryManager.h>
-#include <anki/util/ThreadPool.h>
 #include <anki/collision/Forward.h>
 
 namespace anki
@@ -26,27 +26,43 @@ class UiManager;
 /// @addtogroup renderer
 /// @{
 
+/// Matrices.
+class RenderingContextMatrices
+{
+public:
+	Mat4 m_cameraTransform = Mat4::getIdentity();
+	Mat4 m_view = Mat4::getIdentity();
+	Mat4 m_projection = Mat4::getIdentity();
+	Mat4 m_viewProjection = Mat4::getIdentity();
+
+	Mat4 m_jitter = Mat4::getIdentity();
+	Mat4 m_projectionJitter = Mat4::getIdentity();
+	Mat4 m_viewProjectionJitter = Mat4::getIdentity();
+};
+
 /// Rendering context.
 class RenderingContext
 {
 public:
 	StackAllocator<U8> m_tempAllocator;
-
 	RenderQueue* m_renderQueue ANKI_DBG_NULLIFY;
 
 	RenderGraphDescription m_renderGraphDescr;
 
-	// Extra matrices
-	Mat4 m_projMatJitter;
-	Mat4 m_viewProjMatJitter;
-	Mat4 m_jitterMat;
-	Mat4 m_prevViewProjMat;
-	Mat4 m_prevCamTransform;
+	RenderingContextMatrices m_matrices;
+	RenderingContextMatrices m_prevMatrices;
+
+	/// The render target that the Renderer will populate.
+	RenderTargetHandle m_outRenderTarget;
+	U32 m_outRenderTargetWidth = 0;
+	U32 m_outRenderTargetHeight = 0;
 
 	Vec4 m_unprojParams;
 
-	U32 m_outFbWidth = 0;
-	U32 m_outFbHeight = 0;
+	ClusterBinOut m_clusterBinOut;
+	ClustererMagicValues m_prevClustererMagicValues;
+
+	StagingGpuMemoryToken m_lightShadingUniformsToken;
 
 	RenderingContext(const StackAllocator<U8>& alloc)
 		: m_tempAllocator(alloc)
@@ -63,8 +79,7 @@ public:
 	Second m_lightBinTime ANKI_DBG_NULLIFY;
 };
 
-/// Offscreen renderer. It is a class and not a namespace because we may need external renderers for security cameras
-/// for example
+/// Offscreen renderer.
 class Renderer
 {
 public:
@@ -75,6 +90,11 @@ public:
 	Indirect& getIndirect()
 	{
 		return *m_indirect;
+	}
+
+	VolumetricLightingAccumulation& getVolumetricLightingAccumulation()
+	{
+		return *m_volLighting;
 	}
 
 	ShadowMapping& getShadowMapping()
@@ -102,9 +122,9 @@ public:
 		return *m_forwardShading;
 	}
 
-	Volumetric& getVolumetric()
+	VolumetricFog& getVolumetricFog()
 	{
-		return *m_vol;
+		return *m_volFog;
 	}
 
 	Tonemapping& getTonemapping()
@@ -152,14 +172,14 @@ public:
 		return *m_lensFlare;
 	}
 
-	Reflections& getReflections()
-	{
-		return *m_refl;
-	}
-
 	UiStage& getUiStage()
 	{
 		return *m_uiStage;
+	}
+
+	Ssr& getSsr()
+	{
+		return *m_ssr;
 	}
 
 	U32 getWidth() const
@@ -178,15 +198,14 @@ public:
 	}
 
 	/// Init the renderer.
-	ANKI_USE_RESULT Error init(ThreadPool* threadpool,
+	ANKI_USE_RESULT Error init(ThreadHive* hive,
 		ResourceManager* resources,
 		GrManager* gr,
 		StagingGpuMemoryManager* stagingMem,
 		UiManager* ui,
 		HeapAllocator<U8> alloc,
 		const ConfigSet& config,
-		Timestamp* globTimestamp,
-		Bool willDrawToDefaultFbo);
+		Timestamp* globTimestamp);
 
 	/// This function does all the rendering stages and produces a final result.
 	ANKI_USE_RESULT Error populateRenderGraph(RenderingContext& ctx);
@@ -218,11 +237,6 @@ anki_internal:
 	{
 		ANKI_ASSERT(m_ui);
 		return *m_ui;
-	}
-
-	Bool getTessellationEnabled() const
-	{
-		return m_tessellation;
 	}
 
 	/// My version of gluUnproject
@@ -258,7 +272,7 @@ anki_internal:
 
 	/// Create the init info for a 2D texture that will be used as a render target.
 	ANKI_USE_RESULT RenderTargetDescription create2DRenderTargetDescription(
-		U32 w, U32 h, Format format, TextureUsageBit usage, CString name = {});
+		U32 w, U32 h, Format format, CString name = {});
 
 	ANKI_USE_RESULT TexturePtr createAndClearRenderTarget(
 		const TextureInitInfo& inf, const ClearValue& clearVal = ClearValue());
@@ -266,11 +280,6 @@ anki_internal:
 	GrManager& getGrManager()
 	{
 		return *m_gr;
-	}
-
-	StagingGpuMemoryManager& getStagingGpuMemoryManager()
-	{
-		return *m_stagingMem;
 	}
 
 	HeapAllocator<U8> getAllocator() const
@@ -281,11 +290,6 @@ anki_internal:
 	ResourceManager& getResourceManager()
 	{
 		return *m_resources;
-	}
-
-	ThreadPool& getThreadPool()
-	{
-		return *m_threadpool;
 	}
 
 	Timestamp getGlobalTimestamp() const
@@ -302,11 +306,6 @@ anki_internal:
 	Bool resourcesLoaded() const
 	{
 		return m_resourcesDirty;
-	}
-
-	Bool getDrawToDefaultFramebuffer() const
-	{
-		return m_willDrawToDefaultFbo;
 	}
 
 	TextureViewPtr getDummyTextureView() const
@@ -339,26 +338,50 @@ anki_internal:
 		return m_nearesetNearestSampler;
 	}
 
+	const Array<U32, 4>& getClusterCount() const
+	{
+		return m_clusterCount;
+	}
+
+	StagingGpuMemoryManager& getStagingGpuMemoryManager()
+	{
+		ANKI_ASSERT(m_stagingMem);
+		return *m_stagingMem;
+	}
+
+	ThreadHive& getThreadHive()
+	{
+		ANKI_ASSERT(m_threadHive);
+		return *m_threadHive;
+	}
+
+	const ThreadHive& getThreadHive() const
+	{
+		ANKI_ASSERT(m_threadHive);
+		return *m_threadHive;
+	}
+
 private:
-	ThreadPool* m_threadpool = nullptr;
 	ResourceManager* m_resources = nullptr;
-	GrManager* m_gr = nullptr;
+	ThreadHive* m_threadHive = nullptr;
 	StagingGpuMemoryManager* m_stagingMem = nullptr;
+	GrManager* m_gr = nullptr;
 	UiManager* m_ui = nullptr;
 	Timestamp* m_globTimestamp;
 	HeapAllocator<U8> m_alloc;
 
 	/// @name Rendering stages
 	/// @{
+	UniquePtr<VolumetricLightingAccumulation> m_volLighting;
 	UniquePtr<Indirect> m_indirect;
 	UniquePtr<ShadowMapping> m_shadowMapping; ///< Shadow mapping.
 	UniquePtr<GBuffer> m_gbuffer; ///< Material rendering stage
 	UniquePtr<GBufferPost> m_gbufferPost;
-	UniquePtr<Reflections> m_refl;
+	UniquePtr<Ssr> m_ssr;
 	UniquePtr<LightShading> m_lightShading; ///< Illumination rendering stage
 	UniquePtr<DepthDownscale> m_depth;
 	UniquePtr<ForwardShading> m_forwardShading; ///< Forward shading.
-	UniquePtr<Volumetric> m_vol; ///< Volumetric effects.
+	UniquePtr<VolumetricFog> m_volFog; ///< Volumetric fog.
 	UniquePtr<LensFlare> m_lensFlare; ///< Forward shading lens flares.
 	UniquePtr<DownscaleBlur> m_downscale;
 	UniquePtr<TemporalAA> m_temporalAA;
@@ -370,11 +393,13 @@ private:
 	UniquePtr<UiStage> m_uiStage;
 	/// @}
 
+	Array<U32, 4> m_clusterCount;
+	ClusterBin m_clusterBin;
+
 	U32 m_width;
 	U32 m_height;
 
 	Array<F32, MAX_LOD_COUNT - 1> m_lodDistances; ///< Distance that used to calculate the LOD
-	Bool8 m_tessellation;
 
 	RenderableDrawer m_sceneDrawer;
 
@@ -384,10 +409,8 @@ private:
 	U64 m_prevAsyncTasksCompleted = 0;
 	Bool m_resourcesDirty = true;
 
-	Bool8 m_willDrawToDefaultFbo = false;
-
-	Mat4 m_prevViewProjMat = Mat4::getIdentity();
-	Mat4 m_prevCamTransform = Mat4::getIdentity();
+	RenderingContextMatrices m_prevMatrices;
+	ClustererMagicValues m_prevClustererMagicValues;
 
 	Array<Mat4, 16> m_jitteredMats16x;
 	Array<Mat4, 8> m_jitteredMats8x;
@@ -400,11 +423,15 @@ private:
 	SamplerPtr m_trilinearRepeatSampler;
 	SamplerPtr m_nearesetNearestSampler;
 
+	ShaderProgramResourcePtr m_clearTexComputeProg;
+
 	RendererStats m_stats;
 
 	ANKI_USE_RESULT Error initInternal(const ConfigSet& initializer);
 
 	void initJitteredMats();
+
+	void updateLightShadingUniforms(RenderingContext& ctx) const;
 };
 /// @}
 

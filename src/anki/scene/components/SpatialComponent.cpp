@@ -5,36 +5,45 @@
 
 #include <anki/scene/components/SpatialComponent.h>
 #include <anki/scene/SceneNode.h>
-#include <anki/scene/SectorNode.h>
 #include <anki/scene/SceneGraph.h>
 
 namespace anki
 {
 
 SpatialComponent::SpatialComponent(SceneNode* node, const CollisionShape* shape)
-	: SceneComponent(CLASS_TYPE, node)
+	: SceneComponent(CLASS_TYPE)
+	, m_node(node)
 	, m_shape(shape)
 {
+	ANKI_ASSERT(node);
 	ANKI_ASSERT(shape);
 	markForUpdate();
+	m_octreeInfo.m_userData = this;
 }
 
 SpatialComponent::~SpatialComponent()
 {
-	getSceneGraph().getSectorGroup().spatialDeleted(this);
+	if(m_placed)
+	{
+		m_node->getSceneGraph().getOctree().remove(m_octreeInfo);
+	}
 }
 
-Error SpatialComponent::update(SceneNode&, Second, Second, Bool& updated)
+Error SpatialComponent::update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated)
 {
-	m_flags.unset(Flag::VISIBLE_ANY);
+	ANKI_ASSERT(&node == m_node);
 
-	updated = m_flags.get(Flag::MARKED_FOR_UPDATE);
+	updated = m_markedForUpdate;
 	if(updated)
 	{
 		m_shape->computeAabb(m_aabb);
-		getSceneGraph().getSectorGroup().spatialUpdated(this);
-		m_flags.unset(Flag::MARKED_FOR_UPDATE);
+		m_markedForUpdate = false;
+
+		m_node->getSceneGraph().getOctree().place(m_aabb, &m_octreeInfo);
+		m_placed = true;
 	}
+
+	m_octreeInfo.reset();
 
 	return Error::NONE;
 }

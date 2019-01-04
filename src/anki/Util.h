@@ -35,6 +35,8 @@
 #include <anki/util/Visitor.h>
 #include <anki/util/INotify.h>
 #include <anki/util/SparseArray.h>
+#include <anki/util/ObjectAllocator.h>
+#include <anki/util/Tracer.h>
 
 /// @defgroup util Utilities (like STL)
 

@@ -46,7 +46,7 @@ public:
 	{
 	}
 
-	WeakArray(DynamicArray<T>& arr)
+	explicit WeakArray(DynamicArray<T>& arr)
 		: WeakArray()
 	{
 		if(arr.getSize())
@@ -222,7 +222,7 @@ public:
 
 	/// Construct from WeakArray.
 	ConstWeakArray(const WeakArray<T>& arr)
-		: ConstWeakArray(&arr[0], arr.getSize())
+		: ConstWeakArray((arr.getSize()) ? &arr[0] : nullptr, arr.getSize())
 	{
 	}
 

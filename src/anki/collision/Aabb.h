@@ -30,6 +30,13 @@ public:
 		, m_min(min)
 		, m_max(max)
 	{
+		ANKI_ASSERT(min.w() == 0.0f && max.w() == 0.0f);
+		ANKI_ASSERT(m_min.xyz() < m_max.xyz());
+	}
+
+	Aabb(const Vec3& min, const Vec3& max)
+		: Aabb(Vec4(min, 0.0f), Vec4(max, 0.0f))
+	{
 		ANKI_ASSERT(m_min.xyz() < m_max.xyz());
 	}
 
@@ -50,6 +57,11 @@ public:
 		m_min = x;
 	}
 
+	void setMin(const Vec3& x)
+	{
+		setMin(Vec4(x, 0.0f));
+	}
+
 	const Vec4& getMax() const
 	{
 		return m_max;
@@ -59,6 +71,11 @@ public:
 	{
 		ANKI_ASSERT(x.w() == 0.0);
 		m_max = x;
+	}
+
+	void setMax(const Vec3& x)
+	{
+		setMax(Vec4(x, 0.0f));
 	}
 
 	/// Copy.

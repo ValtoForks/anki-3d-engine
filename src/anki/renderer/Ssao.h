@@ -35,11 +35,16 @@ anki_internal:
 
 	RenderTargetHandle getRt() const
 	{
-		return m_runCtx.m_rts[0];
+		return m_runCtx.m_rts[1];
 	}
 
 private:
+	static const Bool m_useNormal = false;
+	static const Bool m_useCompute = true;
+	static const Bool m_useSoftBlur = true;
+	static const Bool m_blurUseCompute = true;
 	U32 m_width, m_height;
+	Array<U32, 2> m_workgroupSize = {{16, 16}};
 
 	class
 	{
@@ -54,14 +59,7 @@ private:
 	public:
 		ShaderProgramResourcePtr m_prog;
 		ShaderProgramPtr m_grProg;
-	} m_hblur; ///< Horizontal blur.
-
-	class
-	{
-	public:
-		ShaderProgramResourcePtr m_prog;
-		ShaderProgramPtr m_grProg;
-	} m_vblur; ///< Vertical blur.
+	} m_blur; ///< Box blur.
 
 	class
 	{
@@ -70,16 +68,14 @@ private:
 		const RenderingContext* m_ctx = nullptr;
 	} m_runCtx; ///< Runtime context.
 
-	RenderTargetDescription m_rtDescr;
+	Array<RenderTargetDescription, 2> m_rtDescrs;
 	FramebufferDescription m_fbDescr;
 
 	ANKI_USE_RESULT Error initMain(const ConfigSet& set);
-	ANKI_USE_RESULT Error initVBlur(const ConfigSet& set);
-	ANKI_USE_RESULT Error initHBlur(const ConfigSet& set);
+	ANKI_USE_RESULT Error initBlur(const ConfigSet& set);
 
 	void runMain(const RenderingContext& ctx, RenderPassWorkContext& rgraphCtx);
-	void runHBlur(RenderPassWorkContext& rgraphCtx);
-	void runVBlur(RenderPassWorkContext& rgraphCtx);
+	void runBlur(RenderPassWorkContext& rgraphCtx);
 
 	/// A RenderPassWorkCallback for SSAO main pass.
 	static void runMainCallback(RenderPassWorkContext& rgraphCtx)
@@ -88,18 +84,11 @@ private:
 		self->runMain(*self->m_runCtx.m_ctx, rgraphCtx);
 	}
 
-	/// A RenderPassWorkCallback for SSAO HBlur.
-	static void runHBlurCallback(RenderPassWorkContext& rgraphCtx)
+	/// A RenderPassWorkCallback for SSAO blur.
+	static void runBlurCallback(RenderPassWorkContext& rgraphCtx)
 	{
 		Ssao* const self = scast<Ssao*>(rgraphCtx.m_userData);
-		self->runHBlur(rgraphCtx);
-	}
-
-	/// A RenderPassWorkCallback for SSAO VBlur.
-	static void runVBlurCallback(RenderPassWorkContext& rgraphCtx)
-	{
-		Ssao* const self = scast<Ssao*>(rgraphCtx.m_userData);
-		self->runVBlur(rgraphCtx);
+		self->runBlur(rgraphCtx);
 	}
 };
 /// @}

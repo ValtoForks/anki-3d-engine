@@ -16,6 +16,13 @@ namespace anki
 
 TextureImpl::~TextureImpl()
 {
+#if ANKI_ASSERTS_ENABLED
+	if(m_usage != m_usedFor)
+	{
+		ANKI_VK_LOGW("Texture %s hasn't been used in all types of usages", getName().cstr());
+	}
+#endif
+
 	for(auto it : m_viewsMap)
 	{
 		if(it != VK_NULL_HANDLE)
@@ -26,7 +33,7 @@ TextureImpl::~TextureImpl()
 
 	m_viewsMap.destroy(getAllocator());
 
-	if(m_imageHandle)
+	if(m_imageHandle && !(m_usage & TextureUsageBit::PRESENT))
 	{
 		vkDestroyImage(getDevice(), m_imageHandle, nullptr);
 	}
@@ -42,10 +49,14 @@ TextureImpl::~TextureImpl()
 	}
 }
 
-Error TextureImpl::init(const TextureInitInfo& init_)
+Error TextureImpl::initInternal(VkImage externalImage, const TextureInitInfo& init_)
 {
 	TextureInitInfo init = init_;
 	ANKI_ASSERT(init.isValid());
+	if(externalImage)
+	{
+		ANKI_ASSERT(!!(init.m_usage & TextureUsageBit::PRESENT));
+	}
 
 	// Set some stuff
 	m_width = init.m_width;
@@ -70,7 +81,14 @@ Error TextureImpl::init(const TextureInitInfo& init_)
 	m_aspect = getImageAspectFromFormat(m_format);
 	m_usage = init.m_usage;
 
-	ANKI_CHECK(initImage(init));
+	if(externalImage)
+	{
+		m_imageHandle = externalImage;
+	}
+	else
+	{
+		ANKI_CHECK(initImage(init));
+	}
 
 	// Init the template
 	memset(&m_viewCreateInfoTemplate, 0, sizeof(m_viewCreateInfoTemplate)); // memset, it will be used for hashing
@@ -204,7 +222,7 @@ Error TextureImpl::initImage(const TextureInitInfo& init_)
 		else if(init.m_format == Format::S8_UINT)
 		{
 			ANKI_ASSERT(
-				!(init.m_usage & (TextureUsageBit::IMAGE_ALL | TextureUsageBit::TRANSFER_ANY)) && "Can't do that ATM");
+				!(init.m_usage & (TextureUsageBit::IMAGE_ALL | TextureUsageBit::TRANSFER_ALL)) && "Can't do that ATM");
 			init.m_format = Format::D24_UNORM_S8_UINT;
 			m_format = init.m_format;
 			m_vkFormat = convertFormat(m_format);
@@ -213,7 +231,7 @@ Error TextureImpl::initImage(const TextureInitInfo& init_)
 		else if(init.m_format == Format::D24_UNORM_S8_UINT)
 		{
 			ANKI_ASSERT(
-				!(init.m_usage & (TextureUsageBit::IMAGE_ALL | TextureUsageBit::TRANSFER_ANY)) && "Can't do that ATM");
+				!(init.m_usage & (TextureUsageBit::IMAGE_ALL | TextureUsageBit::TRANSFER_ALL)) && "Can't do that ATM");
 			init.m_format = Format::D32_SFLOAT_S8_UINT;
 			m_format = init.m_format;
 			m_vkFormat = convertFormat(m_format);
@@ -246,32 +264,22 @@ Error TextureImpl::initImage(const TextureInitInfo& init_)
 	case TextureType::_2D:
 		ci.extent.depth = 1;
 		ci.arrayLayers = 1;
-
-		m_surfaceOrVolumeCount = m_mipCount;
 		break;
 	case TextureType::_2D_ARRAY:
 		ci.extent.depth = 1;
 		ci.arrayLayers = init.m_layerCount;
-
-		m_surfaceOrVolumeCount = m_mipCount * m_layerCount;
 		break;
 	case TextureType::CUBE:
 		ci.extent.depth = 1;
 		ci.arrayLayers = 6;
-
-		m_surfaceOrVolumeCount = m_mipCount * 6;
 		break;
 	case TextureType::CUBE_ARRAY:
 		ci.extent.depth = 1;
 		ci.arrayLayers = 6 * init.m_layerCount;
-
-		m_surfaceOrVolumeCount = m_mipCount * 6 * m_layerCount;
 		break;
 	case TextureType::_3D:
 		ci.extent.depth = init.m_depth;
 		ci.arrayLayers = 1;
-
-		m_surfaceOrVolumeCount = m_mipCount;
 		break;
 	default:
 		ANKI_ASSERT(0);
@@ -327,9 +335,8 @@ Error TextureImpl::initImage(const TextureInitInfo& init_)
 		getGrManagerImpl().getGpuMemoryManager().allocateMemory(memIdx, req.size, req.alignment, false, m_memHandle);
 
 		// Bind mem to image
-		ANKI_TRACE_START_EVENT(VK_BIND_OBJECT);
+		ANKI_TRACE_SCOPED_EVENT(VK_BIND_OBJECT);
 		ANKI_VK_CHECK(vkBindImageMemory(getDevice(), m_imageHandle, m_memHandle.m_memory, m_memHandle.m_offset));
-		ANKI_TRACE_STOP_EVENT(VK_BIND_OBJECT);
 	}
 	else
 	{
@@ -347,9 +354,8 @@ Error TextureImpl::initImage(const TextureInitInfo& init_)
 		getGrManagerImpl().trySetVulkanHandleName(
 			init.getName(), VK_DEBUG_REPORT_OBJECT_TYPE_DEVICE_MEMORY_EXT, ptrToNumber(m_dedicatedMem));
 
-		ANKI_TRACE_START_EVENT(VK_BIND_OBJECT);
+		ANKI_TRACE_SCOPED_EVENT(VK_BIND_OBJECT);
 		ANKI_VK_CHECK(vkBindImageMemory(getDevice(), m_imageHandle, m_dedicatedMem, 0));
-		ANKI_TRACE_STOP_EVENT(VK_BIND_OBJECT);
 	}
 
 	return Error::NONE;
@@ -575,6 +581,12 @@ void TextureImpl::computeBarrierInfo(TextureUsageBit before,
 		dstAccesses |= VK_ACCESS_TRANSFER_WRITE_BIT;
 	}
 
+	if(!!(after & TextureUsageBit::PRESENT))
+	{
+		dstStages |= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		dstAccesses |= VK_ACCESS_MEMORY_READ_BIT;
+	}
+
 	ANKI_ASSERT(dstStages);
 }
 
@@ -644,6 +656,15 @@ VkImageLayout TextureImpl::computeLayout(TextureUsageBit usage, U level) const
 	{
 		out = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	}
+	else if(usage == TextureUsageBit::PRESENT)
+	{
+		out = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	}
+	else
+	{
+		// Can't set it to something, chose general
+		out = VK_IMAGE_LAYOUT_GENERAL;
+	}
 
 	ANKI_ASSERT(out != VK_IMAGE_LAYOUT_MAX_ENUM);
 	return out;
@@ -673,6 +694,13 @@ VkImageView TextureImpl::getOrCreateView(const TextureSubresourceInfo& subresour
 			getName(), VK_DEBUG_REPORT_OBJECT_TYPE_IMAGE_VIEW_EXT, ptrToNumber(view));
 
 		m_viewsMap.emplace(getAllocator(), subresource, view);
+
+#if 0
+		printf("Creating image view %p. Texture %p %s\n",
+			static_cast<void*>(view),
+			static_cast<void*>(m_imageHandle),
+			getName() ? getName().cstr() : "Unnamed");
+#endif
 
 		return view;
 	}

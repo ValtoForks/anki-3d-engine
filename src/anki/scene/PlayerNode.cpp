@@ -15,15 +15,15 @@ namespace anki
 {
 
 /// Feedback component.
-class PlayerNodeFeedbackComponent final : public SceneComponent
+class PlayerNode::FeedbackComponent final : public SceneComponent
 {
 public:
-	PlayerNodeFeedbackComponent(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	FeedbackComponent()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	Error update(SceneNode& node, Second, Second, Bool& updated) override
+	Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 
@@ -61,15 +61,15 @@ public:
 };
 
 /// Feedback component.
-class PlayerNodeFeedbackComponent2 final : public SceneComponent
+class PlayerNode::FeedbackComponent2 final : public SceneComponent
 {
 public:
-	PlayerNodeFeedbackComponent2(SceneNode* node)
-		: SceneComponent(SceneComponentType::NONE, node)
+	FeedbackComponent2()
+		: SceneComponent(SceneComponentType::NONE)
 	{
 	}
 
-	Error update(SceneNode& node, Second, Second, Bool& updated) override
+	Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override
 	{
 		updated = false;
 
@@ -77,7 +77,7 @@ public:
 		MoveComponent& move = node.getComponent<MoveComponent>();
 		const Input& in = node.getSceneGraph().getInput();
 
-		const F32 speed = 3.5;
+		const F32 speed = 0.5;
 
 		Vec4 moveVec(0.0);
 		if(in.getKey(KeyCode::W))
@@ -125,18 +125,19 @@ Error PlayerNode::init(const Vec4& position)
 	PhysicsPlayerControllerInitInfo init;
 	init.m_position = position;
 	m_player = getSceneGraph().getPhysicsWorld().newInstance<PhysicsPlayerController>(init);
+	m_player->setUserData(this);
 
 	// Player controller component
-	newComponent<PlayerControllerComponent>(this, m_player);
+	newComponent<PlayerControllerComponent>(m_player);
 
 	// Feedback component
-	newComponent<PlayerNodeFeedbackComponent>(this);
+	newComponent<FeedbackComponent>();
 
 	// Move component
-	newComponent<MoveComponent>(this);
+	newComponent<MoveComponent>();
 
 	// Feedback component #2
-	newComponent<PlayerNodeFeedbackComponent2>(this);
+	newComponent<FeedbackComponent2>();
 
 	return Error::NONE;
 }

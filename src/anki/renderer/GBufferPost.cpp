@@ -6,7 +6,6 @@
 #include <anki/renderer/GBufferPost.h>
 #include <anki/renderer/Renderer.h>
 #include <anki/renderer/GBuffer.h>
-#include <anki/renderer/Ssao.h>
 #include <anki/renderer/LightShading.h>
 #include <anki/misc/ConfigSet.h>
 
@@ -32,7 +31,7 @@ Error GBufferPost::initInternal(const ConfigSet& cfg)
 	ANKI_R_LOGI("Initializing GBufferPost pass");
 
 	// Load shaders
-	ANKI_CHECK(getResourceManager().loadResource("programs/GBufferPost.ankiprog", m_prog));
+	ANKI_CHECK(getResourceManager().loadResource("shaders/GBufferPost.glslp", m_prog));
 
 	ShaderProgramResourceConstantValueInitList<3> consts(m_prog);
 	consts.add("CLUSTER_COUNT_X", U32(cfg.getNumber("r.clusterSizeX")));
@@ -63,21 +62,17 @@ void GBufferPost::populateRenderGraph(RenderingContext& ctx)
 	rpass.setWork(runCallback, this, 0);
 	rpass.setFramebufferInfo(m_fbDescr, {{m_r->getGBuffer().getColorRt(0), m_r->getGBuffer().getColorRt(1)}}, {});
 
-	rpass.newConsumer({m_r->getGBuffer().getColorRt(0), TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE});
-	rpass.newConsumer({m_r->getGBuffer().getColorRt(1), TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE});
-	rpass.newConsumer({m_r->getGBuffer().getDepthRt(),
+	rpass.newDependency({m_r->getGBuffer().getColorRt(0), TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE});
+	rpass.newDependency({m_r->getGBuffer().getColorRt(1), TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE});
+	rpass.newDependency({m_r->getGBuffer().getDepthRt(),
 		TextureUsageBit::SAMPLED_FRAGMENT,
 		TextureSubresourceInfo(DepthStencilAspectBit::DEPTH)});
-
-	rpass.newConsumer({m_r->getSsao().getRt(), TextureUsageBit::SAMPLED_FRAGMENT});
-
-	rpass.newProducer({m_r->getGBuffer().getColorRt(0), TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE});
-	rpass.newProducer({m_r->getGBuffer().getColorRt(1), TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE});
 }
 
 void GBufferPost::run(RenderPassWorkContext& rgraphCtx)
 {
-	const LightShadingResources& rsrc = m_r->getLightShading().getResources();
+	const RenderingContext& ctx = *m_runCtx.m_ctx;
+	const ClusterBinOut& rsrc = ctx.m_clusterBinOut;
 	CommandBufferPtr& cmdb = rgraphCtx.m_commandBuffer;
 
 	cmdb->setViewport(0, 0, m_r->getWidth(), m_r->getHeight());
@@ -92,25 +87,24 @@ void GBufferPost::run(RenderPassWorkContext& rgraphCtx)
 		m_r->getGBuffer().getDepthRt(),
 		TextureSubresourceInfo(DepthStencilAspectBit::DEPTH),
 		m_r->getNearestSampler());
-	rgraphCtx.bindColorTextureAndSampler(0, 1, m_r->getSsao().getRt(), m_r->getLinearSampler());
 	cmdb->bindTextureAndSampler(0,
-		2,
+		1,
 		(rsrc.m_diffDecalTexView) ? rsrc.m_diffDecalTexView : m_r->getDummyTextureView(),
 		m_r->getTrilinearRepeatSampler(),
 		TextureUsageBit::SAMPLED_FRAGMENT);
 	cmdb->bindTextureAndSampler(0,
-		3,
+		2,
 		(rsrc.m_specularRoughnessDecalTexView) ? rsrc.m_specularRoughnessDecalTexView : m_r->getDummyTextureView(),
 		m_r->getTrilinearRepeatSampler(),
 		TextureUsageBit::SAMPLED_FRAGMENT);
 
 	// Uniforms
-	bindUniforms(cmdb, 0, 0, rsrc.m_commonUniformsToken);
+	bindUniforms(cmdb, 0, 0, ctx.m_lightShadingUniformsToken);
 	bindUniforms(cmdb, 0, 1, rsrc.m_decalsToken);
 
 	// Storage
 	bindStorage(cmdb, 0, 0, rsrc.m_clustersToken);
-	bindStorage(cmdb, 0, 1, rsrc.m_lightIndicesToken);
+	bindStorage(cmdb, 0, 1, rsrc.m_indicesToken);
 
 	cmdb->drawArrays(PrimitiveTopology::TRIANGLES, 3);
 

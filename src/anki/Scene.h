@@ -6,7 +6,6 @@
 #pragma once
 
 #include <anki/scene/SceneGraph.h>
-#include <anki/scene/SectorNode.h>
 #include <anki/scene/ModelNode.h>
 #include <anki/scene/StaticGeometryNode.h>
 #include <anki/scene/ParticleEmitterNode.h>
@@ -15,10 +14,13 @@
 #include <anki/scene/StaticCollisionNode.h>
 #include <anki/scene/BodyNode.h>
 #include <anki/scene/ReflectionProbeNode.h>
-#include <anki/scene/ReflectionProxyNode.h>
 #include <anki/scene/PlayerNode.h>
 #include <anki/scene/OccluderNode.h>
 #include <anki/scene/DecalNode.h>
+#include <anki/scene/Octree.h>
+#include <anki/scene/PhysicsDebugNode.h>
+#include <anki/scene/TriggerNode.h>
+#include <anki/scene/FogDensityNode.h>
 
 #include <anki/scene/components/MoveComponent.h>
 #include <anki/scene/components/RenderComponent.h>
@@ -32,5 +34,14 @@
 #include <anki/scene/components/LightComponent.h>
 #include <anki/scene/components/BodyComponent.h>
 #include <anki/scene/components/SpatialComponent.h>
-#include <anki/scene/components/ReflectionProxyComponent.h>
 #include <anki/scene/components/FrustumComponent.h>
+#include <anki/scene/components/JointComponent.h>
+#include <anki/scene/components/TriggerComponent.h>
+#include <anki/scene/components/FogDensityComponent.h>
+
+#include <anki/scene/events/EventManager.h>
+#include <anki/scene/events/Event.h>
+#include <anki/scene/events/AnimationEvent.h>
+#include <anki/scene/events/JitterMoveEvent.h>
+#include <anki/scene/events/LightEvent.h>
+#include <anki/scene/events/ScriptEvent.h>

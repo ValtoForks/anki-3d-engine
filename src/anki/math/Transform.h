@@ -47,6 +47,30 @@ public:
 	{
 		checkW();
 	}
+
+	explicit TTransform(const TVec4<T>& origin)
+		: m_origin(origin)
+		, m_rotation(Mat3x4::getIdentity())
+		, m_scale(1.0f)
+	{
+		checkW();
+	}
+
+	explicit TTransform(const TMat3x4<T>& rotation)
+		: m_origin(Vec4(0.0f))
+		, m_rotation(rotation)
+		, m_scale(1.0f)
+	{
+		checkW();
+	}
+
+	TTransform(const T scale)
+		: m_origin(Vec4(0.0f))
+		, m_rotation(Mat3x4::getIdentity())
+		, m_scale(scale)
+	{
+		checkW();
+	}
 	/// @}
 
 	/// @name Accessors
@@ -168,14 +192,14 @@ public:
 	}
 
 	/// Transform a TVec3
-	TVec3<T> transform(const TVec3<T>& b) const
+	ANKI_USE_RESULT TVec3<T> transform(const TVec3<T>& b) const
 	{
 		checkW();
 		return (m_rotation.getRotationPart() * (b * m_scale)) + m_origin.xyz();
 	}
 
 	/// Transform a TVec4. SIMD optimized
-	TVec4<T> transform(const TVec4<T>& b) const
+	ANKI_USE_RESULT TVec4<T> transform(const TVec4<T>& b) const
 	{
 		checkW();
 		TVec4<T> out = TVec4<T>(m_rotation * (b * m_scale), 0.0) + m_origin;

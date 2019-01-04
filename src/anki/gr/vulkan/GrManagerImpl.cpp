@@ -9,7 +9,7 @@
 #include <anki/gr/CommandBuffer.h>
 #include <anki/gr/Fence.h>
 #include <anki/gr/vulkan/FenceImpl.h>
-
+#include <anki/util/Functions.h>
 #include <anki/core/Config.h>
 #include <glslang/Public/ShaderLang.h>
 
@@ -204,8 +204,6 @@ Error GrManagerImpl::initInternal(const GrManagerInitInfo& init)
 	m_descrFactory.init(getAllocator(), m_device);
 	m_pplineLayoutFactory.init(getAllocator(), m_device);
 
-	m_capabilities.m_shaderSubgroups = !!(m_extensions & VulkanExtensions::EXT_SHADER_SUBGROUP_BALLOT);
-
 	return Error::NONE;
 }
 
@@ -213,13 +211,16 @@ Error GrManagerImpl::initInstance(const GrManagerInitInfo& init)
 {
 	// Create the instance
 	//
+	const U32 vulkanMinor = init.m_config->getNumber("gr.vkminor");
+	const U32 vulkanMajor = init.m_config->getNumber("gr.vkmajor");
+
 	VkApplicationInfo app = {};
 	app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	app.pApplicationName = "unamed";
 	app.applicationVersion = 1;
 	app.pEngineName = "AnKi 3D Engine";
 	app.engineVersion = (ANKI_VERSION_MAJOR << 16) | ANKI_VERSION_MINOR;
-	app.apiVersion = VK_MAKE_VERSION(1, 0, 3);
+	app.apiVersion = VK_MAKE_VERSION(vulkanMajor, vulkanMinor, 0);
 
 	VkInstanceCreateInfo ci = {};
 	ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -402,17 +403,27 @@ Error GrManagerImpl::initInstance(const GrManagerInitInfo& init)
 	default:
 		m_capabilities.m_gpuVendor = GpuVendor::UNKNOWN;
 	}
-	ANKI_VK_LOGI("GPU vendor is %s", &GPU_VENDOR_STR[m_capabilities.m_gpuVendor][0]);
+	ANKI_VK_LOGI(
+		"GPU is %s. Vendor identified as %s", m_devProps.deviceName, &GPU_VENDOR_STR[m_capabilities.m_gpuVendor][0]);
 
 	vkGetPhysicalDeviceFeatures(m_physicalDevice, &m_devFeatures);
+	m_devFeatures.robustBufferAccess =
+		(init.m_config->getNumber("window.debugContext") && m_devFeatures.robustBufferAccess) ? true : false;
+	ANKI_VK_LOGI("Robust buffer access is %s", (m_devFeatures.robustBufferAccess) ? "enabled" : "disabled");
 
 	// Set limits
-	m_capabilities.m_uniformBufferBindOffsetAlignment = m_devProps.limits.minUniformBufferOffsetAlignment;
+	m_capabilities.m_uniformBufferBindOffsetAlignment =
+		max<U32>(ANKI_SAFE_ALIGNMENT, m_devProps.limits.minUniformBufferOffsetAlignment);
 	m_capabilities.m_uniformBufferMaxRange = m_devProps.limits.maxUniformBufferRange;
-	m_capabilities.m_storageBufferBindOffsetAlignment = m_devProps.limits.minStorageBufferOffsetAlignment;
+	m_capabilities.m_storageBufferBindOffsetAlignment =
+		max<U32>(ANKI_SAFE_ALIGNMENT, m_devProps.limits.minStorageBufferOffsetAlignment);
 	m_capabilities.m_storageBufferMaxRange = m_devProps.limits.maxStorageBufferRange;
-	m_capabilities.m_textureBufferBindOffsetAlignment = m_devProps.limits.minTexelBufferOffsetAlignment;
+	m_capabilities.m_textureBufferBindOffsetAlignment =
+		max<U32>(ANKI_SAFE_ALIGNMENT, m_devProps.limits.minTexelBufferOffsetAlignment);
 	m_capabilities.m_textureBufferMaxRange = MAX_U32;
+
+	m_capabilities.m_majorApiVersion = vulkanMajor;
+	m_capabilities.m_minorApiVersion = vulkanMinor;
 
 	return Error::NONE;
 }
@@ -519,6 +530,17 @@ Error GrManagerImpl::initDevice(const GrManagerInitInfo& init)
 				m_extensions |= VulkanExtensions::EXT_SHADER_SUBGROUP_BALLOT;
 				extensionsToEnable[extensionsToEnableCount++] = VK_EXT_SHADER_SUBGROUP_BALLOT_EXTENSION_NAME;
 			}
+			else if(CString(extensionInfos[extCount].extensionName) == VK_AMD_SHADER_INFO_EXTENSION_NAME
+					&& init.m_config->getNumber("core.displayStats"))
+			{
+				m_extensions |= VulkanExtensions::AMD_SHADER_INFO;
+				extensionsToEnable[extensionsToEnableCount++] = VK_AMD_SHADER_INFO_EXTENSION_NAME;
+			}
+			else if(CString(extensionInfos[extCount].extensionName) == VK_AMD_RASTERIZATION_ORDER_EXTENSION_NAME)
+			{
+				m_extensions |= VulkanExtensions::AMD_RASTERIZATION_ORDER;
+				extensionsToEnable[extensionsToEnableCount++] = VK_AMD_RASTERIZATION_ORDER_EXTENSION_NAME;
+			}
 		}
 
 		if(!!(m_extensions & VulkanExtensions::KHR_MAINENANCE1))
@@ -552,10 +574,34 @@ Error GrManagerImpl::initDevice(const GrManagerInitInfo& init)
 	{
 		m_pfnDebugMarkerSetObjectNameEXT = reinterpret_cast<PFN_vkDebugMarkerSetObjectNameEXT>(
 			vkGetDeviceProcAddr(m_device, "vkDebugMarkerSetObjectNameEXT"));
-
 		if(!m_pfnDebugMarkerSetObjectNameEXT)
 		{
 			ANKI_VK_LOGW("VK_EXT_debug_marker is present but vkDebugMarkerSetObjectNameEXT is not there");
+		}
+
+		m_pfnCmdDebugMarkerBeginEXT =
+			reinterpret_cast<PFN_vkCmdDebugMarkerBeginEXT>(vkGetDeviceProcAddr(m_device, "vkCmdDebugMarkerBeginEXT"));
+		if(!m_pfnCmdDebugMarkerBeginEXT)
+		{
+			ANKI_VK_LOGW("VK_EXT_debug_marker is present but vkCmdDebugMarkerBeginEXT is not there");
+		}
+
+		m_pfnCmdDebugMarkerEndEXT =
+			reinterpret_cast<PFN_vkCmdDebugMarkerEndEXT>(vkGetDeviceProcAddr(m_device, "vkCmdDebugMarkerEndEXT"));
+		if(!m_pfnCmdDebugMarkerEndEXT)
+		{
+			ANKI_VK_LOGW("VK_EXT_debug_marker is present but vkCmdDebugMarkerEndEXT is not there");
+		}
+	}
+
+	// Get VK_AMD_shader_info entry points
+	if(!!(m_extensions & VulkanExtensions::AMD_SHADER_INFO))
+	{
+		m_pfnGetShaderInfoAMD =
+			reinterpret_cast<PFN_vkGetShaderInfoAMD>(vkGetDeviceProcAddr(m_device, "vkGetShaderInfoAMD"));
+		if(!m_pfnGetShaderInfoAMD)
+		{
+			ANKI_VK_LOGW("VK_AMD_shader_info is present but vkGetShaderInfoAMD is not there");
 		}
 	}
 
@@ -633,8 +679,12 @@ void GrManagerImpl::freeCallback(void* userData, void* ptr)
 }
 #endif
 
-void GrManagerImpl::beginFrame()
+TexturePtr GrManagerImpl::acquireNextPresentableTexture()
 {
+	ANKI_TRACE_SCOPED_EVENT(VK_ACQUIRE_IMAGE);
+
+	LockGuard<Mutex> lock(m_globalMtx);
+
 	PerFrame& frame = m_perFrame[m_frame % MAX_FRAMES_IN_FLIGHT];
 
 	// Create sync objects
@@ -643,21 +693,42 @@ void GrManagerImpl::beginFrame()
 
 	// Get new image
 	uint32_t imageIdx;
-	ANKI_TRACE_START_EVENT(VK_ACQUIRE_IMAGE);
-	ANKI_VK_CHECKF(vkAcquireNextImageKHR(m_device,
+
+	VkResult res = vkAcquireNextImageKHR(m_device,
 		m_crntSwapchain->m_swapchain,
 		UINT64_MAX,
 		frame.m_acquireSemaphore->getHandle(),
 		fence->getHandle(),
-		&imageIdx));
-	ANKI_TRACE_STOP_EVENT(VK_ACQUIRE_IMAGE);
+		&imageIdx);
+
+	if(res == VK_ERROR_OUT_OF_DATE_KHR)
+	{
+		ANKI_VK_LOGW("Swapchain is out of date. Will wait for the queue and create a new one");
+		vkQueueWaitIdle(m_queue);
+		m_crntSwapchain = m_swapchainFactory.newInstance();
+
+		// Can't fail a second time
+		ANKI_VK_CHECKF(vkAcquireNextImageKHR(m_device,
+			m_crntSwapchain->m_swapchain,
+			UINT64_MAX,
+			frame.m_acquireSemaphore->getHandle(),
+			fence->getHandle(),
+			&imageIdx));
+	}
+	else
+	{
+		ANKI_VK_CHECKF(res);
+	}
 
 	ANKI_ASSERT(imageIdx < MAX_FRAMES_IN_FLIGHT);
-	m_crntSwapchain->m_currentBackbufferIndex = imageIdx;
+	m_acquiredImageIdx = imageIdx;
+	return m_crntSwapchain->m_textures[imageIdx];
 }
 
 void GrManagerImpl::endFrame()
 {
+	ANKI_TRACE_SCOPED_EVENT(VK_PRESENT);
+
 	LockGuard<Mutex> lock(m_globalMtx);
 
 	PerFrame& frame = m_perFrame[m_frame % MAX_FRAMES_IN_FLIGHT];
@@ -685,7 +756,7 @@ void GrManagerImpl::endFrame()
 	present.pWaitSemaphores = (frame.m_renderSemaphore) ? &frame.m_renderSemaphore->getHandle() : nullptr;
 	present.swapchainCount = 1;
 	present.pSwapchains = &m_crntSwapchain->m_swapchain;
-	U32 idx = m_crntSwapchain->m_currentBackbufferIndex;
+	U32 idx = m_acquiredImageIdx;
 	present.pImageIndices = &idx;
 	present.pResults = &res;
 
@@ -741,7 +812,8 @@ void GrManagerImpl::flushCommandBuffer(CommandBufferPtr cmdb, FencePtr* outFence
 	if(impl.renderedToDefaultFramebuffer())
 	{
 		submit.pWaitSemaphores = &frame.m_acquireSemaphore->getHandle();
-		waitFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		waitFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+					| VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT; // TODO That depends on how we use the swapchain img
 		submit.pWaitDstStageMask = &waitFlags;
 		submit.waitSemaphoreCount = 1;
 
@@ -763,9 +835,10 @@ void GrManagerImpl::flushCommandBuffer(CommandBufferPtr cmdb, FencePtr* outFence
 
 	impl.setFence(fence);
 
-	ANKI_TRACE_START_EVENT(VK_QUEUE_SUBMIT);
-	ANKI_VK_CHECKF(vkQueueSubmit(m_queue, 1, &submit, fence->getHandle()));
-	ANKI_TRACE_STOP_EVENT(VK_QUEUE_SUBMIT);
+	{
+		ANKI_TRACE_SCOPED_EVENT(VK_QUEUE_SUBMIT);
+		ANKI_VK_CHECKF(vkQueueSubmit(m_queue, 1, &submit, fence->getHandle()));
+	}
 
 	if(wait)
 	{
@@ -850,6 +923,77 @@ VkBool32 GrManagerImpl::debugReportCallbackEXT(VkDebugReportFlagsEXT flags,
 	}
 
 	return false;
+}
+
+void GrManagerImpl::printPipelineShaderInfo(VkPipeline ppline, CString name, ShaderTypeBit stages, U64 hash) const
+{
+	Error err = printPipelineShaderInfoInternal(ppline, name, stages, hash);
+	if(err)
+	{
+		ANKI_VK_LOGE("Ignoring previous errors");
+	}
+}
+
+Error GrManagerImpl::printPipelineShaderInfoInternal(
+	VkPipeline ppline, CString name, ShaderTypeBit stages, U64 hash) const
+{
+	if(m_pfnGetShaderInfoAMD)
+	{
+		VkShaderStatisticsInfoAMD stats = {};
+
+		LockGuard<SpinLock> lock(m_shaderStatsFileMtx);
+
+		// Open the file
+		if(!m_shaderStatsFile.isOpen())
+		{
+			ANKI_CHECK(m_shaderStatsFile.open(
+				StringAuto(getAllocator()).sprintf("%s/../ppline_stats.csv", m_cacheDir.cstr()).toCString(),
+				FileOpenFlag::WRITE));
+
+			ANKI_CHECK(m_shaderStatsFile.writeText("ppline name,hash,"
+												   "stage 0 VGPR,stage 0 SGPR,"
+												   "stage 1 VGPR,stage 1 SGPR,"
+												   "stage 2 VGPR,stage 2 SGPR,"
+												   "stage 3 VGPR,stage 3 SGPR,"
+												   "stage 4 VGPR,stage 4 SGPR,"
+												   "stage 5 VGPR,stage 5 SGPR\n"));
+		}
+
+		ANKI_CHECK(m_shaderStatsFile.writeText("%s,0x%" PRIx64 ",", name.cstr(), hash));
+
+		StringAuto str(getAllocator());
+
+		for(ShaderType type = ShaderType::FIRST; type < ShaderType::COUNT; ++type)
+		{
+			ShaderTypeBit stage = stages & ShaderTypeBit(1 << type);
+			if(!stage)
+			{
+				ANKI_CHECK(m_shaderStatsFile.writeText((type != ShaderType::LAST) ? "0,0," : "0,0\n"));
+				continue;
+			}
+
+			size_t size = sizeof(stats);
+			ANKI_VK_CHECK(m_pfnGetShaderInfoAMD(
+				m_device, ppline, convertShaderTypeBit(stage), VK_SHADER_INFO_TYPE_STATISTICS_AMD, &size, &stats));
+
+			str.append(StringAuto(getAllocator())
+						   .sprintf("Stage %u: VGRPS %02u, SGRPS %02u ",
+							   U32(type),
+							   stats.resourceUsage.numUsedVgprs,
+							   stats.resourceUsage.numUsedSgprs));
+
+			ANKI_CHECK(m_shaderStatsFile.writeText((type != ShaderType::LAST) ? "%u,%u," : "%u,%u\n",
+				stats.resourceUsage.numUsedVgprs,
+				stats.resourceUsage.numUsedSgprs));
+		}
+
+		ANKI_VK_LOGI("Pipeline \"%s\" (0x%016" PRIx64 ") stats: %s", name.cstr(), hash, str.cstr());
+
+		// Flush the file just in case
+		ANKI_CHECK(m_shaderStatsFile.flush());
+	}
+
+	return Error::NONE;
 }
 
 } // end namespace anki

@@ -21,8 +21,6 @@ class DecalComponent : public SceneComponent
 {
 public:
 	static const SceneComponentType CLASS_TYPE = SceneComponentType::DECAL;
-
-	static constexpr F32 FRUSTUM_NEAR_PLANE = 0.1f / 4.0f;
 	static constexpr U ATLAS_SUB_TEXTURE_MARGIN = 16;
 
 	DecalComponent(SceneNode* node);
@@ -74,7 +72,7 @@ public:
 	}
 
 	/// Implements SceneComponent::update.
-	ANKI_USE_RESULT Error update(SceneNode&, Second, Second, Bool& updated) override
+	ANKI_USE_RESULT Error update(SceneNode& node, Second, Second, Bool& updated) override
 	{
 		updated = m_markedForUpdate;
 
@@ -118,7 +116,7 @@ public:
 		return m_sizes;
 	}
 
-	void setupDecalQueueElement(DecalQueueElement& el) const
+	void setupDecalQueueElement(DecalQueueElement& el)
 	{
 		el.m_diffuseAtlas = (m_layers[LayerType::DIFFUSE].m_atlas)
 								? m_layers[LayerType::DIFFUSE].m_atlas->getGrTextureView().get()
@@ -154,6 +152,7 @@ private:
 		F32 m_blendFactor = 0.0f;
 	};
 
+	SceneNode* m_node;
 	Array<Layer, U(LayerType::COUNT)> m_layers;
 	Mat4 m_biasProjViewMat;
 	Vec3 m_sizes = Vec3(1.0f);

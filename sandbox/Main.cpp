@@ -45,12 +45,14 @@ Error MyApp::init(int argc, char* argv[])
 	MainRenderer& renderer = getMainRenderer();
 	ResourceManager& resources = getResourceManager();
 
-	renderer.getOffscreenRenderer().getVolumetric().setFogParticleColor(Vec3(1.0, 0.9, 0.9) * 0.009);
+	renderer.getOffscreenRenderer().getVolumetricFog().setFogParticleColor(Vec3(1.0, 0.9, 0.9));
+	renderer.getOffscreenRenderer().getVolumetricFog().setParticleDensity(1.0f);
 
 	if(getenv("PROFILE"))
 	{
 		m_profile = true;
 		setTimerTick(0.0);
+		CoreTracerSingleton::get().m_enabled = true;
 	}
 
 // Input
@@ -161,6 +163,11 @@ Error MyApp::userMainLoop(Bool& quit)
 		renderer.getDbg().switchDepthTestEnabled();
 	}
 
+	if(in.getKey(KeyCode::F12) == 1)
+	{
+		CoreTracerSingleton::get().m_enabled = !CoreTracerSingleton::get().m_enabled;
+	}
+
 #if !PLAYER
 	if(in.getKey(KeyCode::UP))
 		mover->rotateLocalX(ang);
@@ -177,9 +184,9 @@ Error MyApp::userMainLoop(Bool& quit)
 	}
 	if(in.getKey(KeyCode::D))
 		mover->moveLocalX(dist);
-	if(in.getKey(KeyCode::Z))
-		mover->moveLocalY(dist);
 	if(in.getKey(KeyCode::SPACE))
+		mover->moveLocalY(dist);
+	if(in.getKey(KeyCode::C))
 		mover->moveLocalY(-dist);
 	if(in.getKey(KeyCode::W))
 		mover->moveLocalZ(-dist);
@@ -214,7 +221,7 @@ Error MyApp::userMainLoop(Bool& quit)
 		quit = true;
 	}
 
-	if(m_profile && getGlobalTimestamp() == 500)
+	if(m_profile && getGlobalTimestamp() == 1000)
 	{
 		quit = true;
 		return Error::NONE;

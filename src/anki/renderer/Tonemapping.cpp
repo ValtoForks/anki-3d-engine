@@ -24,11 +24,10 @@ Error Tonemapping::init(const ConfigSet& cfg)
 
 Error Tonemapping::initInternal(const ConfigSet& initializer)
 {
-	m_inputTexMip =
-		computeMaxMipmapCount2d(m_r->getWidth(), m_r->getHeight(), AVERAGE_LUMINANCE_RENDER_TARGET_SIZE) - 1;
+	m_inputTexMip = m_r->getDownscaleBlur().getMipmapCount() - 2;
 
 	// Create program
-	ANKI_CHECK(getResourceManager().loadResource("programs/TonemappingAverageLuminance.ankiprog", m_prog));
+	ANKI_CHECK(getResourceManager().loadResource("shaders/TonemappingAverageLuminance.glslp", m_prog));
 
 	ShaderProgramResourceConstantValueInitList<1> consts(m_prog);
 	consts.add("INPUT_TEX_SIZE",
@@ -64,25 +63,28 @@ Error Tonemapping::initInternal(const ConfigSet& initializer)
 	return Error::NONE;
 }
 
+void Tonemapping::importRenderTargets(RenderingContext& ctx)
+{
+	// Computation of the AVG luminance will run first in the frame and it will use the m_luminanceBuff as storage
+	// read/write. To skip the barrier import it as read/write as well.
+	m_runCtx.m_buffHandle =
+		ctx.m_renderGraphDescr.importBuffer(m_luminanceBuff, BufferUsageBit::STORAGE_COMPUTE_READ_WRITE);
+}
+
 void Tonemapping::populateRenderGraph(RenderingContext& ctx)
 {
 	RenderGraphDescription& rgraph = ctx.m_renderGraphDescr;
-
-	// Create buffer
-	m_runCtx.m_buffHandle = rgraph.importBuffer("Avg lum", m_luminanceBuff, BufferUsageBit::NONE);
 
 	// Create the pass
 	ComputeRenderPassDescription& pass = rgraph.newComputeRenderPass("Avg lum");
 
 	pass.setWork(runCallback, this, 0);
 
-	pass.newConsumer({m_runCtx.m_buffHandle, BufferUsageBit::STORAGE_COMPUTE_READ_WRITE});
+	pass.newDependency({m_runCtx.m_buffHandle, BufferUsageBit::STORAGE_COMPUTE_READ_WRITE});
 
 	TextureSubresourceInfo inputTexSubresource;
 	inputTexSubresource.m_firstMipmap = m_inputTexMip;
-	pass.newConsumer({m_r->getDownscaleBlur().getRt(), TextureUsageBit::SAMPLED_COMPUTE, inputTexSubresource});
-
-	pass.newProducer({m_runCtx.m_buffHandle, BufferUsageBit::STORAGE_COMPUTE_READ_WRITE});
+	pass.newDependency({m_r->getDownscaleBlur().getRt(), TextureUsageBit::SAMPLED_COMPUTE, inputTexSubresource});
 }
 
 void Tonemapping::run(RenderPassWorkContext& rgraphCtx)

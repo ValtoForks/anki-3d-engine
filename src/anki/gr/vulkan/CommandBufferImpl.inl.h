@@ -280,7 +280,7 @@ inline void CommandBufferImpl::drawArraysIndirect(
 	m_state.setPrimitiveTopology(topology);
 	drawcallCommon();
 	const BufferImpl& impl = static_cast<const BufferImpl&>(*buff);
-	ANKI_ASSERT(impl.usageValid(BufferUsageBit::INDIRECT));
+	ANKI_ASSERT(impl.usageValid(BufferUsageBit::INDIRECT_GRAPHICS));
 	ANKI_ASSERT((offset % 4) == 0);
 	ANKI_ASSERT((offset + sizeof(DrawArraysIndirectInfo) * drawCount) <= impl.getSize());
 
@@ -294,7 +294,7 @@ inline void CommandBufferImpl::drawElementsIndirect(
 	m_state.setPrimitiveTopology(topology);
 	drawcallCommon();
 	const BufferImpl& impl = static_cast<const BufferImpl&>(*buff);
-	ANKI_ASSERT(impl.usageValid(BufferUsageBit::INDIRECT));
+	ANKI_ASSERT(impl.usageValid(BufferUsageBit::INDIRECT_ALL));
 	ANKI_ASSERT((offset % 4) == 0);
 	ANKI_ASSERT((offset + sizeof(DrawElementsIndirectInfo) * drawCount) <= impl.getSize());
 
@@ -740,7 +740,7 @@ inline void CommandBufferImpl::copyBufferToBuffer(
 
 inline Bool CommandBufferImpl::flipViewport() const
 {
-	return static_cast<const FramebufferImpl&>(*m_activeFb).isDefaultFramebuffer()
+	return static_cast<const FramebufferImpl&>(*m_activeFb).hasPresentableTexture()
 		   && !!(getGrManagerImpl().getExtensions() & VulkanExtensions::KHR_MAINENANCE1);
 }
 
@@ -752,6 +752,8 @@ inline void CommandBufferImpl::setPushConstants(const void* data, U32 dataSize)
 	ANKI_ASSERT(prog->getReflectionInfo().m_pushConstantsSize == dataSize
 				&& "The bound program should have push constants equal to the \"dataSize\" parameter");
 
+	commandCommon();
+
 	ANKI_CMD(
 		vkCmdPushConstants(m_handle, prog->getPipelineLayout().getHandle(), VK_SHADER_STAGE_ALL, 0, dataSize, data),
 		ANY_OTHER_COMMAND);
@@ -759,6 +761,16 @@ inline void CommandBufferImpl::setPushConstants(const void* data, U32 dataSize)
 #if ANKI_EXTRA_CHECKS
 	m_setPushConstantsSize = dataSize;
 #endif
+}
+
+inline void CommandBufferImpl::setRasterizationOrder(RasterizationOrder order)
+{
+	commandCommon();
+
+	if(!!(getGrManagerImpl().getExtensions() & VulkanExtensions::AMD_RASTERIZATION_ORDER))
+	{
+		m_state.setRasterizationOrder(order);
+	}
 }
 
 } // end namespace anki

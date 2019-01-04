@@ -36,8 +36,9 @@ public:
 class GrManagerStats
 {
 public:
-	PtrSize m_cpuMemory;
-	PtrSize m_gpuMemory;
+	PtrSize m_cpuMemory = 0;
+	PtrSize m_gpuMemory = 0;
+	U32 m_commandBufferCount = 0;
 };
 
 /// The graphics manager, owner of all graphics objects.
@@ -55,8 +56,9 @@ public:
 		return m_capabilities;
 	}
 
-	/// Begin frame.
-	void beginFrame();
+	/// Get next presentable image. The returned Texture is valid until the following swapBuffers. After that it might
+	/// dissapear even if you hold the reference.
+	TexturePtr acquireNextPresentableTexture();
 
 	/// Swap buffers
 	void swapBuffers();

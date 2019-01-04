@@ -22,6 +22,7 @@ public:
 	Mat4 m_viewMatrix;
 	Mat4 m_projectionMatrix;
 	Mat4 m_viewProjectionMatrix;
+	Mat4 m_previousViewProjectionMatrix;
 };
 
 /// Some options that can be used as hints in debug drawcalls.
@@ -53,7 +54,11 @@ public:
 	RenderQueueDrawCallback m_callback;
 	const void* m_userData;
 	U64 m_mergeKey;
-	F32 m_distanceFromCamera;
+	F32 m_distanceFromCamera; ///< Don't set this
+
+	RenderableQueueElement()
+	{
+	}
 };
 
 static_assert(
@@ -73,6 +78,10 @@ public:
 
 	UVec2 m_atlasTiles; ///< Renderer internal.
 	F32 m_atlasTileSize; ///< Renderer internal.
+
+	PointLightQueueElement()
+	{
+	}
 
 	Bool hasShadow() const
 	{
@@ -98,6 +107,10 @@ public:
 	const void* m_userData;
 	RenderQueueDrawCallback m_drawCallback;
 
+	SpotLightQueueElement()
+	{
+	}
+
 	Bool hasShadow() const
 	{
 		return m_shadowRenderQueue != nullptr;
@@ -120,9 +133,14 @@ public:
 	void* m_userData;
 	U64 m_uuid;
 	Vec3 m_worldPosition;
-	F32 m_radius;
+	Vec3 m_aabbMin;
+	Vec3 m_aabbMax;
 	Array<RenderQueue*, 6> m_renderQueues;
 	U32 m_textureArrayIndex; ///< Renderer internal.
+
+	ReflectionProbeQueueElement()
+	{
+	}
 };
 
 static_assert(
@@ -139,6 +157,10 @@ public:
 	const TextureView* m_textureView;
 	const void* m_userData;
 	RenderQueueDrawCallback m_drawCallback;
+
+	LensFlareQueueElement()
+	{
+	}
 };
 
 static_assert(std::is_trivially_destructible<LensFlareQueueElement>::value == true, "Should be trivially destructible");
@@ -150,9 +172,9 @@ public:
 	const void* m_userData;
 	RenderQueueDrawCallback m_drawCallback;
 	/// Totaly unsafe but we can't have a smart ptr in here since there will be no deletion.
-	const TextureView* m_diffuseAtlas;
+	TextureView* m_diffuseAtlas;
 	/// Totaly unsafe but we can't have a smart ptr in here since there will be no deletion.
-	const TextureView* m_specularRoughnessAtlas;
+	TextureView* m_specularRoughnessAtlas;
 	Vec4 m_diffuseAtlasUv;
 	Vec4 m_specularRoughnessAtlasUv;
 	F32 m_diffuseAtlasBlendFactor;
@@ -161,6 +183,10 @@ public:
 	Vec3 m_obbCenter;
 	Vec3 m_obbExtend;
 	Mat3 m_obbRotation;
+
+	DecalQueueElement()
+	{
+	}
 };
 
 static_assert(std::is_trivially_destructible<DecalQueueElement>::value == true, "Should be trivially destructible");
@@ -174,9 +200,43 @@ class UiQueueElement final
 public:
 	void* m_userData;
 	UiQueueDrawCallback m_drawCallback;
+
+	UiQueueElement()
+	{
+	}
 };
 
 static_assert(std::is_trivially_destructible<UiQueueElement>::value == true, "Should be trivially destructible");
+
+/// Fog density queue element.
+class FogDensityQueueElement final
+{
+public:
+	union
+	{
+		Vec3 m_aabbMin;
+		Vec3 m_sphereCenter;
+	};
+
+	union
+	{
+		Vec3 m_aabbMax;
+		F32 m_sphereRadius;
+	};
+
+	F32 m_density;
+	Bool8 m_isBox;
+
+	FogDensityQueueElement()
+	{
+	}
+};
+
+static_assert(
+	std::is_trivially_destructible<FogDensityQueueElement>::value == true, "Should be trivially destructible");
+
+/// A callback to fill a coverage buffer.
+using FillCoverageBufferCallback = void (*)(void* userData, F32* depthValues, U32 width, U32 height);
 
 /// The render queue. This is what the renderer is fed to render.
 class RenderQueue : public RenderingMatrices
@@ -192,13 +252,19 @@ public:
 	WeakArray<ReflectionProbeQueueElement> m_reflectionProbes;
 	WeakArray<LensFlareQueueElement> m_lensFlares;
 	WeakArray<DecalQueueElement> m_decals;
+	WeakArray<FogDensityQueueElement> m_fogDensityVolumes;
 	WeakArray<UiQueueElement> m_uis;
 
-	/// Applies only if the RenderQueue holds shadow casters. It's the timesamp that modified
+	/// Applies only if the RenderQueue holds shadow casters. It's the max timesamp of all shadow casters
 	Timestamp m_shadowRenderablesLastUpdateTimestamp = 0;
 
 	F32 m_cameraNear;
 	F32 m_cameraFar;
+
+	FillCoverageBufferCallback m_fillCoverageBufferCallback = nullptr;
+	void* m_fillCoverageBufferCallbackUserData = nullptr;
+
+	U countAllRenderables() const;
 };
 
 static_assert(std::is_trivially_destructible<RenderQueue>::value == true, "Should be trivially destructible");

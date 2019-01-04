@@ -7,7 +7,8 @@
 
 #include <anki/renderer/Renderer.h>
 #include <anki/renderer/RendererObject.h>
-#include <anki/renderer/Clusterer.h>
+#include <anki/renderer/TraditionalDeferredShading.h>
+#include <anki/renderer/ClusterBin.h>
 #include <anki/resource/TextureResource.h>
 
 namespace anki
@@ -57,10 +58,6 @@ anki_internal:
 	}
 
 private:
-	struct LightPassVertexUniforms;
-	struct LightPassPointLightUniforms;
-	struct LightPassSpotLightUniforms;
-
 	class
 	{
 	public:
@@ -70,22 +67,19 @@ private:
 		FramebufferDescription m_fbDescr;
 	} m_gbuffer; ///< G-buffer pass.
 
-	class
+	class LS
 	{
 	public:
 		U32 m_tileSize = 0;
 		U32 m_mipCount = 0;
 		TexturePtr m_cubeArr;
 
-		ShaderProgramResourcePtr m_lightProg;
-		ShaderProgramPtr m_plightGrProg;
-		ShaderProgramPtr m_slightGrProg;
+		TraditionalDeferredLightShading m_deferred;
 
-		/// @name Meshes of light volumes.
-		/// @{
-		MeshResourcePtr m_plightMesh;
-		MeshResourcePtr m_slightMesh;
-		/// @}
+		LS(Renderer* r)
+			: m_deferred(r)
+		{
+		}
 	} m_lightShading; ///< Light shading.
 
 	class
@@ -99,6 +93,13 @@ private:
 		ShaderProgramPtr m_grProg;
 	} m_irradiance; ///< Irradiance.
 
+	class
+	{
+	public:
+		ShaderProgramResourcePtr m_prog;
+		ShaderProgramPtr m_grProg;
+	} m_irradianceToRefl; ///< Apply irradiance back to the reflection.
+
 	class CacheEntry
 	{
 	public:
@@ -107,6 +108,7 @@ private:
 
 		Array<FramebufferDescription, 6> m_lightShadingFbDescrs;
 		Array<FramebufferDescription, 6> m_irradianceFbDescrs;
+		Array<FramebufferDescription, 6> m_irradianceToReflFbDescrs;
 	};
 
 	DynamicArray<CacheEntry> m_cacheEntries;
@@ -132,6 +134,7 @@ private:
 	ANKI_USE_RESULT Error initGBuffer(const ConfigSet& cfg);
 	ANKI_USE_RESULT Error initLightShading(const ConfigSet& cfg);
 	ANKI_USE_RESULT Error initIrradiance(const ConfigSet& cfg);
+	ANKI_USE_RESULT Error initIrradianceToRefl(const ConfigSet& cfg);
 
 	/// Lazily init the cache entry
 	void initCacheEntry(U32 cacheEntryIdx);
@@ -146,12 +149,12 @@ private:
 	void runLightShading(U32 faceIdx, RenderPassWorkContext& rgraphCtx);
 	void runMipmappingOfLightShading(U32 faceIdx, RenderPassWorkContext& rgraphCtx);
 	void runIrradiance(U32 faceIdx, RenderPassWorkContext& rgraphCtx);
-	static void bindVertexIndexBuffers(MeshResourcePtr& mesh, CommandBufferPtr& cmdb, U32& indexCount);
+	void runIrradianceToRefl(U32 faceIdx, RenderPassWorkContext& rgraphCtx);
 
 	// A RenderPassWorkCallback for G-buffer pass
 	static void runGBufferCallback(RenderPassWorkContext& rgraphCtx)
 	{
-		Indirect* const self = scast<Indirect*>(rgraphCtx.m_userData);
+		Indirect* const self = static_cast<Indirect*>(rgraphCtx.m_userData);
 		self->runGBuffer(rgraphCtx.m_commandBuffer);
 	}
 
@@ -159,7 +162,7 @@ private:
 	template<U faceIdx>
 	static void runLightShadingCallback(RenderPassWorkContext& rgraphCtx)
 	{
-		Indirect* const self = scast<Indirect*>(rgraphCtx.m_userData);
+		Indirect* const self = static_cast<Indirect*>(rgraphCtx.m_userData);
 		self->runLightShading(faceIdx, rgraphCtx);
 	}
 
@@ -167,7 +170,7 @@ private:
 	template<U faceIdx>
 	static void runMipmappingOfLightShadingCallback(RenderPassWorkContext& rgraphCtx)
 	{
-		Indirect* const self = scast<Indirect*>(rgraphCtx.m_userData);
+		Indirect* const self = static_cast<Indirect*>(rgraphCtx.m_userData);
 		self->runMipmappingOfLightShading(faceIdx, rgraphCtx);
 	}
 
@@ -175,8 +178,16 @@ private:
 	template<U faceIdx>
 	static void runIrradianceCallback(RenderPassWorkContext& rgraphCtx)
 	{
-		Indirect* const self = scast<Indirect*>(rgraphCtx.m_userData);
+		Indirect* const self = static_cast<Indirect*>(rgraphCtx.m_userData);
 		self->runIrradiance(faceIdx, rgraphCtx);
+	}
+
+	// A RenderPassWorkCallback to apply the irradiance back to the reflection.
+	template<U faceIdx>
+	static void runIrradianceToReflCallback(RenderPassWorkContext& rgraphCtx)
+	{
+		Indirect* const self = static_cast<Indirect*>(rgraphCtx.m_userData);
+		self->runIrradianceToRefl(faceIdx, rgraphCtx);
 	}
 };
 /// @}

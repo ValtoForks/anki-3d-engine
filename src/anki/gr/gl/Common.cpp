@@ -170,6 +170,11 @@ void convertVertexFormat(Format fmt, U& compCount, GLenum& type, Bool& normalize
 		type = GL_UNSIGNED_SHORT;
 		normalized = true;
 		break;
+	case Format::R16G16B16A16_SFLOAT:
+		compCount = 4;
+		type = GL_HALF_FLOAT;
+		normalized = false;
+		break;
 	case Format::A2B10G10R10_SNORM_PACK32:
 		compCount = 4;
 		type = GL_INT_2_10_10_10_REV;
@@ -356,6 +361,16 @@ void convertTextureInformation(
 		format = GL_R;
 		internalFormat = GL_R16;
 		type = GL_UNSIGNED_SHORT;
+		break;
+	case Format::R16G16_UNORM:
+		format = GL_RG;
+		internalFormat = GL_RG16;
+		type = GL_UNSIGNED_SHORT;
+		break;
+	case Format::R16G16_SNORM:
+		format = GL_RG;
+		internalFormat = GL_RG16_SNORM;
+		type = GL_SHORT;
 		break;
 	case Format::R16G16B16_SFLOAT:
 		format = GL_RGB;

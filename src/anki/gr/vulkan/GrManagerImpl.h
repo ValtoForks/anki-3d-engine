@@ -23,7 +23,8 @@
 namespace anki
 {
 
-#define ANKI_GR_MANAGER_DEBUG_MEMMORY ANKI_EXTRA_CHECKS
+/// @note Disable that because it crashes Intel drivers
+#define ANKI_GR_MANAGER_DEBUG_MEMMORY ANKI_EXTRA_CHECKS && 0
 
 // Forward
 class TextureFallbackUploader;
@@ -54,7 +55,7 @@ public:
 		return m_devProps;
 	}
 
-	void beginFrame();
+	TexturePtr acquireNextPresentableTexture();
 
 	void endFrame();
 
@@ -76,6 +77,11 @@ public:
 	/// @{
 
 	CommandBufferFactory& getCommandBufferFactory()
+	{
+		return m_cmdbFactory;
+	}
+
+	const CommandBufferFactory& getCommandBufferFactory() const
 	{
 		return m_cmdbFactory;
 	}
@@ -168,6 +174,30 @@ public:
 		return m_queueIdx;
 	}
 
+	/// @name Debug report
+	/// @{
+	void beginMarker(VkCommandBuffer cmdb, CString name) const
+	{
+		ANKI_ASSERT(cmdb);
+		if(m_pfnCmdDebugMarkerBeginEXT)
+		{
+			VkDebugMarkerMarkerInfoEXT markerInfo = {};
+			markerInfo.sType = VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT;
+			markerInfo.color[0] = 1.0f;
+			markerInfo.pMarkerName = (!name.isEmpty() && name.getLength() > 0) ? name.cstr() : "Unnamed";
+			m_pfnCmdDebugMarkerBeginEXT(cmdb, &markerInfo);
+		}
+	}
+
+	void endMarker(VkCommandBuffer cmdb) const
+	{
+		ANKI_ASSERT(cmdb);
+		if(m_pfnCmdDebugMarkerEndEXT)
+		{
+			m_pfnCmdDebugMarkerEndEXT(cmdb);
+		}
+	}
+
 	void trySetVulkanHandleName(CString name, VkDebugReportObjectTypeEXT type, U64 handle) const;
 
 	void trySetVulkanHandleName(CString name, VkDebugReportObjectTypeEXT type, void* handle) const
@@ -181,6 +211,9 @@ public:
 	{
 		return tryGetVulkanHandleName(U64(ptrToNumber(handle)));
 	}
+	/// @}
+
+	void printPipelineShaderInfo(VkPipeline ppline, CString name, ShaderTypeBit stages, U64 hash = 0) const;
 
 private:
 	U64 m_frame = 0;
@@ -210,6 +243,11 @@ private:
 	VkPhysicalDeviceFeatures m_devFeatures = {};
 
 	PFN_vkDebugMarkerSetObjectNameEXT m_pfnDebugMarkerSetObjectNameEXT = nullptr;
+	PFN_vkCmdDebugMarkerBeginEXT m_pfnCmdDebugMarkerBeginEXT = nullptr;
+	PFN_vkCmdDebugMarkerEndEXT m_pfnCmdDebugMarkerEndEXT = nullptr;
+	PFN_vkGetShaderInfoAMD m_pfnGetShaderInfoAMD = nullptr;
+	mutable File m_shaderStatsFile;
+	mutable SpinLock m_shaderStatsFileMtx;
 
 	/// @name Surface_related
 	/// @{
@@ -225,6 +263,7 @@ private:
 
 	VkSurfaceKHR m_surface = VK_NULL_HANDLE;
 	MicroSwapchainPtr m_crntSwapchain;
+	U8 m_acquiredImageIdx = MAX_U8;
 
 	Array<PerFrame, MAX_FRAMES_IN_FLIGHT> m_perFrame;
 	/// @}
@@ -289,6 +328,9 @@ private:
 		const char* pLayerPrefix,
 		const char* pMessage,
 		void* pUserData);
+
+	ANKI_USE_RESULT Error printPipelineShaderInfoInternal(
+		VkPipeline ppline, CString name, ShaderTypeBit stages, U64 hash) const;
 };
 /// @}
 

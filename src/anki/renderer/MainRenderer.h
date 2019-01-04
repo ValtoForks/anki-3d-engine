@@ -15,7 +15,6 @@ namespace anki
 // Forward
 class ResourceManager;
 class ConfigSet;
-class ThreadPool;
 class StagingGpuMemoryManager;
 class UiManager;
 
@@ -37,7 +36,7 @@ public:
 
 	~MainRenderer();
 
-	ANKI_USE_RESULT Error init(ThreadPool* threadpool,
+	ANKI_USE_RESULT Error init(ThreadHive* hive,
 		ResourceManager* resources,
 		GrManager* gl,
 		StagingGpuMemoryManager* stagingMem,
@@ -47,7 +46,7 @@ public:
 		const ConfigSet& config,
 		Timestamp* globTimestamp);
 
-	ANKI_USE_RESULT Error render(RenderQueue& rqueue);
+	ANKI_USE_RESULT Error render(RenderQueue& rqueue, TexturePtr presentTex);
 
 	Dbg& getDbg();
 
@@ -84,10 +83,19 @@ private:
 	F32 m_renderingQuality = 1.0;
 
 	RenderGraphPtr m_rgraph;
+	RenderTargetDescription m_tmpRtDesc;
 
 	MainRendererStats m_stats;
 
+	class
+	{
+	public:
+		const RenderingContext* m_ctx = nullptr;
+		Atomic<U32> m_secondaryTaskId = {0};
+	} m_runCtx;
+
 	void runBlit(RenderPassWorkContext& rgraphCtx);
+	void present(RenderPassWorkContext& rgraphCtx);
 
 	// A RenderPassWorkCallback for blit pass.
 	static void runCallback(RenderPassWorkContext& rgraphCtx)
@@ -95,6 +103,15 @@ private:
 		MainRenderer* const self = scast<MainRenderer*>(rgraphCtx.m_userData);
 		self->runBlit(rgraphCtx);
 	}
+
+	// A RenderPassWorkCallback for present.
+	static void presentCallback(RenderPassWorkContext& rgraphCtx)
+	{
+		// Do nothing. This pass is dummy
+	}
+
+	static void executeSecondaryCallback(
+		void* userData, U32 threadId, ThreadHive& hive, ThreadHiveSemaphore* signalSemaphore);
 };
 /// @}
 

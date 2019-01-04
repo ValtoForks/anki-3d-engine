@@ -12,6 +12,7 @@
 #include <cstddef> // For ptrdiff_t
 #include <utility> // For forward
 #include <new> // For placement new
+#include <type_traits> // For some checks
 
 namespace anki
 {
@@ -117,6 +118,12 @@ public:
 		return *this;
 	}
 
+	/// Check if it's initialized.
+	operator bool() const
+	{
+		return m_pool != nullptr;
+	}
+
 	/// Get the address of a reference
 	pointer address(reference x) const
 	{
@@ -163,7 +170,6 @@ public:
 	/// Call constructor
 	void construct(pointer p, const T& val)
 	{
-		// Placement new
 		::new(p) T(val);
 	}
 
@@ -173,6 +179,16 @@ public:
 	{
 		// Placement new
 		::new(static_cast<void*>(p)) Y(std::forward<Args>(args)...);
+	}
+
+	/// Call default constructor only for non-trivially constructible types.
+	template<typename Y>
+	void construct(Y* p)
+	{
+		if(!std::is_trivially_constructible<Y>::value)
+		{
+			::new(static_cast<void*>(p)) Y();
+		}
 	}
 
 	/// Call destructor

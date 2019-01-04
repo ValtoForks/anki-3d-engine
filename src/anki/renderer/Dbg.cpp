@@ -8,7 +8,6 @@
 #include <anki/renderer/GBuffer.h>
 #include <anki/renderer/LightShading.h>
 #include <anki/renderer/FinalComposite.h>
-#include <anki/renderer/DebugDrawer.h>
 #include <anki/renderer/RenderQueue.h>
 #include <anki/Scene.h>
 #include <anki/util/Logger.h>
@@ -39,11 +38,8 @@ Error Dbg::lazyInit()
 	ANKI_ASSERT(!m_initialized);
 
 	// RT descr
-	m_rtDescr = m_r->create2DRenderTargetDescription(m_r->getWidth(),
-		m_r->getHeight(),
-		DBG_COLOR_ATTACHMENT_PIXEL_FORMAT,
-		TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ_WRITE,
-		"Dbg");
+	m_rtDescr = m_r->create2DRenderTargetDescription(
+		m_r->getWidth(), m_r->getHeight(), DBG_COLOR_ATTACHMENT_PIXEL_FORMAT, "Dbg");
 	m_rtDescr.bake();
 
 	// Create FB descr
@@ -80,7 +76,7 @@ void Dbg::run(RenderPassWorkContext& rgraphCtx, const RenderingContext& ctx)
 	dctx.m_cameraTransform = ctx.m_renderQueue->m_viewMatrix.getInverse();
 	dctx.m_stagingGpuAllocator = &m_r->getStagingGpuMemoryManager();
 	dctx.m_commandBuffer = cmdb;
-	dctx.m_key = RenderingKey(Pass::GB_FS, 0, 1);
+	dctx.m_key = RenderingKey(Pass::FS, 0, 1, false, false);
 	dctx.m_debugDraw = true;
 	dctx.m_debugDrawFlags = m_debugDrawFlags;
 
@@ -115,10 +111,9 @@ void Dbg::populateRenderGraph(RenderingContext& ctx)
 	pass.setWork(runCallback, this, 0);
 	pass.setFramebufferInfo(m_fbDescr, {{m_runCtx.m_rt}}, m_r->getGBuffer().getDepthRt());
 
-	pass.newConsumer({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
-	pass.newConsumer({m_r->getGBuffer().getDepthRt(),
+	pass.newDependency({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
+	pass.newDependency({m_r->getGBuffer().getDepthRt(),
 		TextureUsageBit::SAMPLED_FRAGMENT | TextureUsageBit::FRAMEBUFFER_ATTACHMENT_READ});
-	pass.newProducer({m_runCtx.m_rt, TextureUsageBit::FRAMEBUFFER_ATTACHMENT_WRITE});
 }
 
 } // end namespace anki

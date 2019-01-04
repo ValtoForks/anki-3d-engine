@@ -30,10 +30,11 @@ enum class FrustumComponentVisibilityTestFlag : U16
 	REFLECTION_PROXIES = 1 << 5,
 	OCCLUDERS = 1 << 6,
 	DECALS = 1 << 7,
-	EARLY_Z = 1 << 8,
+	FOG_DENSITY_COMPONENTS = 1 << 8,
+	EARLY_Z = 1 << 9,
 
 	ALL_TESTS = RENDER_COMPONENTS | LIGHT_COMPONENTS | LENS_FLARE_COMPONENTS | SHADOW_CASTERS | REFLECTION_PROBES
-				| REFLECTION_PROXIES | DECALS | EARLY_Z
+				| REFLECTION_PROXIES | DECALS | FOG_DENSITY_COMPONENTS | EARLY_Z
 };
 ANKI_ENUM_ALLOW_NUMERIC_OPERATIONS(FrustumComponentVisibilityTestFlag, inline)
 
@@ -52,6 +53,18 @@ public:
 	/// Pass the frustum here so we can avoid the virtuals
 	FrustumComponent(SceneNode* node, Frustum* frustum);
 
+	~FrustumComponent();
+
+	SceneNode& getSceneNode()
+	{
+		return *m_node;
+	}
+
+	const SceneNode& getSceneNode() const
+	{
+		return *m_node;
+	}
+
 	Frustum& getFrustum()
 	{
 		return *m_frustum;
@@ -64,17 +77,22 @@ public:
 
 	const Mat4& getProjectionMatrix() const
 	{
-		return m_pm;
+		return m_projMat;
 	}
 
 	const Mat4& getViewMatrix() const
 	{
-		return m_vm;
+		return m_viewMat;
 	}
 
 	const Mat4& getViewProjectionMatrix() const
 	{
-		return m_vpm;
+		return m_viewProjMat;
+	}
+
+	const Mat4& getPreviousViewProjectionMatrix() const
+	{
+		return m_prevViewProjMat;
 	}
 
 	/// Get the origin for sorting and visibility tests
@@ -109,7 +127,7 @@ public:
 
 	/// @name SceneComponent overrides
 	/// @{
-	ANKI_USE_RESULT Error update(SceneNode&, Second, Second, Bool& updated) override;
+	ANKI_USE_RESULT Error update(SceneNode& node, Second prevTime, Second crntTime, Bool& updated) override;
 	/// @}
 
 	void setEnabledVisibilityTests(FrustumComponentVisibilityTestFlag bits)
@@ -140,20 +158,53 @@ public:
 		return m_flags.getAny(FrustumComponentVisibilityTestFlag::ALL_TESTS);
 	}
 
+	/// The type is FillCoverageBufferCallback.
+	static void fillCoverageBufferCallback(void* userData, F32* depthValues, U32 width, U32 height);
+
+	Bool hasCoverageBuffer() const
+	{
+		return m_coverageBuff.m_depthMap.getSize() > 0;
+	}
+
+	void getCoverageBufferInfo(ConstWeakArray<F32>& depthBuff, U32& width, U32& height) const
+	{
+		if(m_coverageBuff.m_depthMap.getSize() > 0)
+		{
+			depthBuff = ConstWeakArray<F32>(&m_coverageBuff.m_depthMap[0], m_coverageBuff.m_depthMap.getSize());
+			width = m_coverageBuff.m_depthMapWidth;
+			height = m_coverageBuff.m_depthMapHeight;
+		}
+		else
+		{
+			depthBuff = ConstWeakArray<F32>();
+			width = height = 0;
+		}
+	}
+
 private:
 	enum Flags
 	{
-		SHAPE_MARKED_FOR_UPDATE = 1 << 9,
-		TRANSFORM_MARKED_FOR_UPDATE = 1 << 10,
+		SHAPE_MARKED_FOR_UPDATE = 1 << 10,
+		TRANSFORM_MARKED_FOR_UPDATE = 1 << 12,
 	};
 	ANKI_ENUM_ALLOW_NUMERIC_OPERATIONS(Flags, friend)
 
+	SceneNode* m_node;
 	Frustum* m_frustum;
-	Mat4 m_pm = Mat4::getIdentity(); ///< Projection matrix
-	Mat4 m_vm = Mat4::getIdentity(); ///< View matrix
-	Mat4 m_vpm = Mat4::getIdentity(); ///< View projection matrix
+	Mat4 m_projMat = Mat4::getIdentity(); ///< Projection matrix
+	Mat4 m_viewMat = Mat4::getIdentity(); ///< View matrix
+	Mat4 m_viewProjMat = Mat4::getIdentity(); ///< View projection matrix
+	Mat4 m_prevViewProjMat = Mat4::getIdentity();
 
 	BitMask<U16> m_flags;
+
+	class
+	{
+	public:
+		DynamicArray<F32> m_depthMap;
+		U32 m_depthMapWidth = 0;
+		U32 m_depthMapHeight = 0;
+	} m_coverageBuff; ///< Coverage buffer for extra visibility tests.
 };
 /// @}
 
